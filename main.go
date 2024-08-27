@@ -11,6 +11,8 @@ import (
 )
 
 func main() {
+	config.VerifyEnvVars()
+
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go startListener()

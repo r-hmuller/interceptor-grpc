@@ -6,15 +6,14 @@ import (
 	"sync"
 )
 
-var snapshotLock = &sync.Mutex{}
-var isSnapshotBeingTaken = false
+var SnapshotLock = &sync.Mutex{}
+var IsSnapshotBeingTaken = false
 
-// Env vars:
+// VerifyEnvVars Env vars:
 // - APPLICATION_URL: Full application URL, with port
 // - INTERCEPTOR_PORT: Port to listen to
 // - HEARTBEAT_ENABLED: Enable or disable the heartbeat
 // - CHECKPOINT_ENABLED: Enable or disable the checkpoint
-
 func VerifyEnvVars() {
 	applicationUrl, ok := os.LookupEnv("APPLICATION_URL")
 	if !ok {

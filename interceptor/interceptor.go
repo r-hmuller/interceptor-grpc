@@ -24,27 +24,54 @@ type HTTPResponse struct {
 	InterceptorControl string
 }
 
+type QueueHttpRequest struct {
+	Request  *http.Request
+	Response http.ResponseWriter
+}
+
+var requestChannel = make(chan QueueHttpRequest)
+
 func Handler(w http.ResponseWriter, r *http.Request) {
-	u, err := uuid.NewV7()
-	if err != nil {
-		log.Err(err).Msg("Error generating UUID")
+	newRequest := QueueHttpRequest{Request: r, Response: w}
+
+	requestChannel <- newRequest
+}
+
+func ProcessRequests() {
+	for {
+		select {
+		case enqueuedRequest := <-requestChannel:
+			config.SnapshotLock.Lock()
+
+			if config.IsSnapshotBeingTaken {
+				requestChannel <- enqueuedRequest
+			}
+
+			u, err := uuid.NewV7()
+			if err != nil {
+				log.Err(err).Msg("Error generating UUID")
+			}
+
+			requestNumber := config.SaveRequestToBuffer(enqueuedRequest.Request)
+
+			requestToApp := enqueuedRequest.Request.Clone(enqueuedRequest.Request.Context())
+			requestToApp.URL.Host = config.GetApplicationURL()
+			serverResponse := HTTPResponse{}
+			method := requestToApp.Method
+			serverResponse = sendRequest(method, requestToApp, u.String())
+
+			enqueuedRequest.Response.WriteHeader(serverResponse.StatusCode)
+			_, err = enqueuedRequest.Response.Write(serverResponse.Body)
+			if err != nil {
+				log.Err(err).Msg("Error writing response")
+			}
+
+			config.UpdateRequestToProcessed(requestNumber)
+
+			config.SnapshotLock.Unlock()
+
+		}
 	}
-
-	requestNumber := config.SaveRequestToBuffer(r)
-
-	requestToApp := r.Clone(r.Context())
-	requestToApp.URL.Host = config.GetApplicationURL()
-	serverResponse := HTTPResponse{}
-	method := requestToApp.Method
-	serverResponse = sendRequest(method, requestToApp, u.String())
-
-	w.WriteHeader(serverResponse.StatusCode)
-	_, err = w.Write(serverResponse.Body)
-	if err != nil {
-		log.Err(err).Msg("Error writing response")
-	}
-
-	config.UpdateRequestToProcessed(requestNumber)
 }
 
 func sendRequest(method string, destiny *http.Request, uuid string) HTTPResponse {
