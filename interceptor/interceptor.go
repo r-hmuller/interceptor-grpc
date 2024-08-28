@@ -4,10 +4,10 @@ import (
 	"bytes"
 	"crypto/tls"
 	"errors"
-	"fmt"
 	"github.com/google/uuid"
 	"github.com/rs/zerolog/log"
 	"interceptor-grpc/config"
+	"io"
 	"io/ioutil"
 	"net/http"
 	"sync"
@@ -29,65 +29,50 @@ type QueueHttpRequest struct {
 	Response http.ResponseWriter
 }
 
-var requestChannel = make(chan QueueHttpRequest)
-
 func Handler(w http.ResponseWriter, r *http.Request) {
-	newRequest := QueueHttpRequest{Request: r, Response: w}
+	processRequest(w, r)
 
-	requestChannel <- newRequest
 }
 
-func ProcessRequests() {
-	for {
-		select {
-		case enqueuedRequest := <-requestChannel:
-			config.SnapshotLock.Lock()
-
-			if config.IsSnapshotBeingTaken {
-				requestChannel <- enqueuedRequest
-			}
-
-			u, err := uuid.NewV7()
-			if err != nil {
-				log.Err(err).Msg("Error generating UUID")
-			}
-
-			requestNumber := config.SaveRequestToBuffer(enqueuedRequest.Request)
-
-			requestToApp := enqueuedRequest.Request.Clone(enqueuedRequest.Request.Context())
-			requestToApp.URL.Host = config.GetApplicationURL()
-			serverResponse := HTTPResponse{}
-			method := requestToApp.Method
-			serverResponse = sendRequest(method, requestToApp, u.String())
-
-			enqueuedRequest.Response.WriteHeader(serverResponse.StatusCode)
-			_, err = enqueuedRequest.Response.Write(serverResponse.Body)
-			if err != nil {
-				log.Err(err).Msg("Error writing response")
-			}
-
-			config.UpdateRequestToProcessed(requestNumber)
-
-			config.SnapshotLock.Unlock()
-
-		}
+func processRequest(responseWriter http.ResponseWriter, request *http.Request) {
+	u, err := uuid.NewV7()
+	if err != nil {
+		log.Err(err).Msg("Error generating UUID")
 	}
+
+	requestNumber := config.SaveRequestToBuffer(request)
+
+	requestToApp := request.Clone(request.Context())
+	requestToApp.URL.Host = config.GetApplicationURL()
+	serverResponse := HTTPResponse{}
+	method := requestToApp.Method
+	serverResponse = sendRequest(method, requestToApp, u.String())
+
+	responseWriter.WriteHeader(serverResponse.StatusCode)
+	_, err = responseWriter.Write(serverResponse.Body)
+	if err != nil {
+		log.Err(err).Msg("Error writing response")
+	}
+
+	config.UpdateRequestToProcessed(requestNumber)
 }
 
 func sendRequest(method string, destiny *http.Request, uuid string) HTTPResponse {
 	response := HTTPResponse{}
 	client := getHttpClient()
-	fullUrl := config.GetApplicationURL() + destiny.URL.String()
+	log.Info().Msg("Application URL" + config.GetApplicationURL())
 
-	requestBody, err := ioutil.ReadAll(destiny.Body)
+	requestBody, err := io.ReadAll(destiny.Body)
 	if err != nil {
 		log.Printf("Error reading body: %v", err)
 		response.StatusCode = 500
 		return response
 	}
-	destiny.Body = ioutil.NopCloser(bytes.NewBuffer(requestBody))
+	destiny.Body = io.NopCloser(bytes.NewBuffer(requestBody))
 
-	req, err := http.NewRequest(method, fullUrl, bytes.NewBuffer(requestBody))
+	fullPath := config.GetApplicationURL() + destiny.URL.Path + "?" + destiny.URL.RawQuery
+
+	req, err := http.NewRequest(method, fullPath, bytes.NewBuffer(requestBody))
 	if err != nil {
 		log.Err(err).Msg("Error creating request")
 		response.StatusCode = 500
@@ -136,7 +121,6 @@ func getHttpClient() *http.Client {
 		lock.Lock()
 		defer lock.Unlock()
 		if singleInstance == nil {
-			fmt.Println("Creating single instance now.")
 			singleInstance = &http.Client{Transport: tr}
 		}
 	}

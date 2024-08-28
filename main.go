@@ -26,5 +26,6 @@ func startListener() {
 	router := mux.NewRouter()
 	router.PathPrefix("/").HandlerFunc(interceptor.Handler)
 
+	log.Printf("Starting interceptor on port %s\n", config.GetInterceptorPort())
 	log.Fatal(http.ListenAndServe(config.GetInterceptorPort(), router))
 }
