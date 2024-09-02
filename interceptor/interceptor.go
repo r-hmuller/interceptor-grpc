@@ -39,6 +39,7 @@ func processRequest(responseWriter http.ResponseWriter, request *http.Request) {
 	if err != nil {
 		log.Err(err).Msg("Error generating UUID")
 	}
+	log.Info().Msg("New request at " + time.Now().String())
 
 	requestNumber := config.SaveRequestToBuffer(request)
 
@@ -60,7 +61,6 @@ func processRequest(responseWriter http.ResponseWriter, request *http.Request) {
 func sendRequest(method string, destiny *http.Request, uuid string) HTTPResponse {
 	response := HTTPResponse{}
 	client := getHttpClient()
-	log.Info().Msg("Application URL" + config.GetApplicationURL())
 
 	requestBody, err := io.ReadAll(destiny.Body)
 	if err != nil {
