@@ -39,8 +39,6 @@ func processRequest(responseWriter http.ResponseWriter, request *http.Request) {
 	if err != nil {
 		log.Err(err).Msg("Error generating UUID")
 	}
-	log.Info().Msg("New request at " + time.Now().String())
-
 	requestNumber := config.SaveRequestToBuffer(request)
 
 	requestToApp := request.Clone(request.Context())
