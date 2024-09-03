@@ -15,7 +15,7 @@ func SaveRequestToBuffer(request *http.Request) uint64 {
 	num := requestNumber.Add(1)
 	requestsMap.Store(num, request)
 	processedMap.Store(num, "pending")
-	return requestNumber.Load()
+	return num
 }
 
 func UpdateRequestToProcessed(number uint64) {
