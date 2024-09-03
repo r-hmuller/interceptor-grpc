@@ -4,17 +4,17 @@ import (
 	"bytes"
 	"crypto/tls"
 	"errors"
-	"github.com/google/uuid"
 	"github.com/rs/zerolog/log"
 	"interceptor-grpc/config"
 	"io"
 	"io/ioutil"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 )
 
-var lock = &sync.Mutex{}
+var lock = &sync.RWMutex{}
 var singleInstance *http.Client
 
 type HTTPResponse struct {
@@ -35,20 +35,16 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 }
 
 func processRequest(responseWriter http.ResponseWriter, request *http.Request) {
-	u, err := uuid.NewV7()
-	if err != nil {
-		log.Err(err).Msg("Error generating UUID")
-	}
 	requestNumber := config.SaveRequestToBuffer(request)
 
 	requestToApp := request.Clone(request.Context())
 	requestToApp.URL.Host = config.GetApplicationURL()
 	serverResponse := HTTPResponse{}
 	method := requestToApp.Method
-	serverResponse = sendRequest(method, requestToApp, u.String())
+	serverResponse = sendRequest(method, requestToApp, requestNumber)
 
 	responseWriter.WriteHeader(serverResponse.StatusCode)
-	_, err = responseWriter.Write(serverResponse.Body)
+	_, err := responseWriter.Write(serverResponse.Body)
 	if err != nil {
 		log.Err(err).Msg("Error writing response")
 	}
@@ -56,7 +52,7 @@ func processRequest(responseWriter http.ResponseWriter, request *http.Request) {
 	config.UpdateRequestToProcessed(requestNumber)
 }
 
-func sendRequest(method string, destiny *http.Request, uuid string) HTTPResponse {
+func sendRequest(method string, destiny *http.Request, uuid uint64) HTTPResponse {
 	response := HTTPResponse{}
 	client := getHttpClient()
 
@@ -77,7 +73,7 @@ func sendRequest(method string, destiny *http.Request, uuid string) HTTPResponse
 		return response
 	}
 
-	req.Header.Add("Interceptor-Controller", uuid)
+	req.Header.Add("Interceptor-Controller", strconv.FormatUint(uuid, 10))
 	addHeaders(destiny, req)
 	resp, err := client.Do(req)
 	if err != nil {
@@ -101,7 +97,7 @@ func sendRequest(method string, destiny *http.Request, uuid string) HTTPResponse
 	}
 
 	response.Body = body
-	response.InterceptorControl = uuid
+	response.InterceptorControl = strconv.FormatUint(uuid, 10)
 
 	return response
 }
@@ -117,10 +113,10 @@ func getHttpClient() *http.Client {
 
 	if singleInstance == nil {
 		lock.Lock()
-		defer lock.Unlock()
 		if singleInstance == nil {
 			singleInstance = &http.Client{Transport: tr}
 		}
+		lock.Unlock()
 	}
 
 	return singleInstance
