@@ -35,6 +35,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 }
 
 func processRequest(responseWriter http.ResponseWriter, request *http.Request) {
+	startTime := time.Now()
 	requestNumber := config.SaveRequestToBuffer(request)
 
 	requestToApp := request.Clone(request.Context())
@@ -50,9 +51,12 @@ func processRequest(responseWriter http.ResponseWriter, request *http.Request) {
 	}
 
 	config.UpdateRequestToProcessed(requestNumber)
+	elapsedTime := time.Since(startTime)
+	log.Info().Msgf("All flow for request %d took %s", requestNumber, elapsedTime)
 }
 
 func sendRequest(method string, destiny *http.Request, uuid uint64) HTTPResponse {
+	startTime := time.Now()
 	response := HTTPResponse{}
 	client := getHttpClient()
 
@@ -99,6 +103,8 @@ func sendRequest(method string, destiny *http.Request, uuid uint64) HTTPResponse
 	response.Body = body
 	response.InterceptorControl = strconv.FormatUint(uuid, 10)
 
+	elapsedTime := time.Since(startTime)
+	log.Info().Msgf("Send request %d took %s", uuid, elapsedTime)
 	return response
 }
 
