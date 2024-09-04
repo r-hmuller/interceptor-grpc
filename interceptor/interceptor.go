@@ -38,11 +38,9 @@ func processRequest(responseWriter http.ResponseWriter, request *http.Request) {
 	startTime := time.Now()
 	requestNumber := config.SaveRequestToBuffer(request)
 
-	requestToApp := request.Clone(request.Context())
-	requestToApp.URL.Host = config.GetApplicationURL()
+	request.URL.Host = config.GetApplicationURL()
 	serverResponse := HTTPResponse{}
-	method := requestToApp.Method
-	serverResponse = sendRequest(method, requestToApp, requestNumber)
+	serverResponse = sendRequest(request, requestNumber)
 
 	responseWriter.WriteHeader(serverResponse.StatusCode)
 	_, err := responseWriter.Write(serverResponse.Body)
@@ -55,10 +53,11 @@ func processRequest(responseWriter http.ResponseWriter, request *http.Request) {
 	log.Info().Msgf("All flow for request %d took %s", requestNumber, elapsedTime)
 }
 
-func sendRequest(method string, destiny *http.Request, uuid uint64) HTTPResponse {
+func sendRequest(destiny *http.Request, uuid uint64) HTTPResponse {
 	startTime := time.Now()
 	response := HTTPResponse{}
 	client := getHttpClient()
+	method := destiny.Method
 
 	requestBody, err := io.ReadAll(destiny.Body)
 	if err != nil {
@@ -69,6 +68,7 @@ func sendRequest(method string, destiny *http.Request, uuid uint64) HTTPResponse
 
 	log.Info().Msgf("Path: %s", destiny.URL.Path)
 	log.Info().Msgf("Query: %s", destiny.URL.RawQuery)
+	log.Info().Msgf("Query: %s", destiny.URL.Query().Encode())
 	fullPath := config.GetApplicationURL() + destiny.URL.Path + "?" + destiny.URL.RawQuery
 
 	log.Info().Msgf("Sending request %d to %s", uuid, fullPath)
