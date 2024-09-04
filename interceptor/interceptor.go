@@ -70,6 +70,8 @@ func sendRequest(method string, destiny *http.Request, uuid uint64) HTTPResponse
 
 	fullPath := config.GetApplicationURL() + destiny.URL.Path + "?" + destiny.URL.RawQuery
 
+	log.Info().Msgf("Sending request %d to %s", uuid, fullPath)
+
 	req, err := http.NewRequest(method, fullPath, bytes.NewBuffer(requestBody))
 	if err != nil {
 		log.Err(err).Msg("Error creating request")
@@ -103,6 +105,7 @@ func sendRequest(method string, destiny *http.Request, uuid uint64) HTTPResponse
 	response.Body = body
 	response.InterceptorControl = strconv.FormatUint(uuid, 10)
 
+	log.Info().Msgf("Response for request %d: %d", uuid, response.StatusCode)
 	elapsedTime := time.Since(startTime)
 	log.Info().Msgf("Send request %d took %s", uuid, elapsedTime)
 	return response
