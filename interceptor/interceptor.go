@@ -66,13 +66,14 @@ func sendRequest(method string, destiny *http.Request, uuid uint64) HTTPResponse
 		response.StatusCode = 500
 		return response
 	}
-	destiny.Body = io.NopCloser(bytes.NewBuffer(requestBody))
 
+	log.Info().Msgf("Path: %s", destiny.URL.Path)
+	log.Info().Msgf("Query: %s", destiny.URL.RawQuery)
 	fullPath := config.GetApplicationURL() + destiny.URL.Path + "?" + destiny.URL.RawQuery
 
 	log.Info().Msgf("Sending request %d to %s", uuid, fullPath)
 
-	req, err := http.NewRequest(method, fullPath, bytes.NewBuffer(requestBody))
+	req, err := http.NewRequest(method, fullPath, bytes.NewReader(requestBody))
 	if err != nil {
 		log.Err(err).Msg("Error creating request")
 		response.StatusCode = 500
@@ -101,6 +102,7 @@ func sendRequest(method string, destiny *http.Request, uuid uint64) HTTPResponse
 		response.StatusCode = 500
 		return response
 	}
+	log.Info().Msgf("Body: %s", string(body))
 
 	response.Body = body
 	response.InterceptorControl = strconv.FormatUint(uuid, 10)
