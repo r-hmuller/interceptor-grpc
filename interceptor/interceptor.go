@@ -35,7 +35,6 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 }
 
 func processRequest(responseWriter http.ResponseWriter, request *http.Request) {
-	startTime := time.Now()
 	requestNumber := config.SaveRequestToBuffer(request)
 
 	requestToApp := request.Clone(request.Context())
@@ -51,12 +50,9 @@ func processRequest(responseWriter http.ResponseWriter, request *http.Request) {
 	}
 
 	config.UpdateRequestToProcessed(requestNumber)
-	elapsedTime := time.Since(startTime)
-	log.Info().Msgf("All flow for request %d took %s", requestNumber, elapsedTime)
 }
 
 func sendRequest(method string, destiny *http.Request, uuid uint64) HTTPResponse {
-	startTime := time.Now()
 	response := HTTPResponse{}
 	client := getHttpClient()
 
@@ -67,11 +63,7 @@ func sendRequest(method string, destiny *http.Request, uuid uint64) HTTPResponse
 		return response
 	}
 
-	log.Info().Msgf("Path: %s", destiny.URL.Path)
-	log.Info().Msgf("Query: %s", destiny.URL.RawQuery)
 	fullPath := config.GetApplicationURL() + destiny.URL.Path + "?" + destiny.URL.RawQuery
-
-	log.Info().Msgf("Sending request %d to %s", uuid, fullPath)
 
 	req, err := http.NewRequest(method, fullPath, bytes.NewReader(requestBody))
 	if err != nil {
@@ -102,14 +94,10 @@ func sendRequest(method string, destiny *http.Request, uuid uint64) HTTPResponse
 		response.StatusCode = 500
 		return response
 	}
-	log.Info().Msgf("Body: %s", string(body))
 
 	response.Body = body
 	response.InterceptorControl = strconv.FormatUint(uuid, 10)
 
-	log.Info().Msgf("Response for request %d: %d", uuid, response.StatusCode)
-	elapsedTime := time.Since(startTime)
-	log.Info().Msgf("Send request %d took %s", uuid, elapsedTime)
 	return response
 }
 
