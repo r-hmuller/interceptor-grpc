@@ -10,12 +10,8 @@ import (
 	"io/ioutil"
 	"net/http"
 	"strconv"
-	"sync"
 	"time"
 )
-
-var lock = &sync.RWMutex{}
-var singleInstance *http.Client
 
 type HTTPResponse struct {
 	StatusCode         int
@@ -37,11 +33,9 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 func processRequest(responseWriter http.ResponseWriter, request *http.Request) {
 	requestNumber := config.SaveRequestToBuffer(request)
 
-	requestToApp := request.Clone(request.Context())
-	requestToApp.URL.Host = config.GetApplicationURL()
+	request.URL.Host = config.GetApplicationURL()
 	serverResponse := HTTPResponse{}
-	method := requestToApp.Method
-	serverResponse = sendRequest(method, requestToApp, requestNumber)
+	serverResponse = sendRequest(request, requestNumber)
 
 	responseWriter.WriteHeader(serverResponse.StatusCode)
 	_, err := responseWriter.Write(serverResponse.Body)
@@ -52,9 +46,10 @@ func processRequest(responseWriter http.ResponseWriter, request *http.Request) {
 	config.UpdateRequestToProcessed(requestNumber)
 }
 
-func sendRequest(method string, destiny *http.Request, uuid uint64) HTTPResponse {
+func sendRequest(destiny *http.Request, uuid uint64) HTTPResponse {
 	response := HTTPResponse{}
 	client := getHttpClient()
+	method := destiny.Method
 
 	requestBody, err := io.ReadAll(destiny.Body)
 	if err != nil {
@@ -110,15 +105,7 @@ func getHttpClient() *http.Client {
 		TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
 	}
 
-	if singleInstance == nil {
-		lock.Lock()
-		if singleInstance == nil {
-			singleInstance = &http.Client{Transport: tr}
-		}
-		lock.Unlock()
-	}
-
-	return singleInstance
+	return &http.Client{Transport: tr}
 }
 
 func getBodyContent(response *http.Response) ([]byte, error) {
