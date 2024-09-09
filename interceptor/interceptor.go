@@ -7,9 +7,9 @@ import (
 	"github.com/rs/zerolog/log"
 	"interceptor-grpc/config"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 )
 
@@ -25,25 +25,28 @@ type QueueHttpRequest struct {
 	Response http.ResponseWriter
 }
 
+var clientLock = &sync.Mutex{}
+var singleInstance *http.Client
+
 func Handler(w http.ResponseWriter, r *http.Request) {
-	processRequest(w, r)
+	requestNumber := config.SaveRequestToBuffer(r)
 
-}
-
-func processRequest(responseWriter http.ResponseWriter, request *http.Request) {
-	requestNumber := config.SaveRequestToBuffer(request)
-
-	request.URL.Host = config.GetApplicationURL()
+	r.URL.Host = config.GetApplicationURL()
 	serverResponse := HTTPResponse{}
-	serverResponse = sendRequest(request, requestNumber)
+	serverResponse = sendRequest(r, requestNumber)
 
-	responseWriter.WriteHeader(serverResponse.StatusCode)
-	_, err := responseWriter.Write(serverResponse.Body)
+	w.WriteHeader(serverResponse.StatusCode)
+	_, err := w.Write(serverResponse.Body)
 	if err != nil {
 		log.Err(err).Msg("Error writing response")
 	}
 
-	config.UpdateRequestToProcessed(requestNumber)
+	requestUpdate := config.RequestUpdate{
+		Number: requestNumber,
+		Status: "processed",
+	}
+	config.RequestUpdateChannel <- requestUpdate
+
 }
 
 func sendRequest(destiny *http.Request, uuid uint64) HTTPResponse {
@@ -105,11 +108,19 @@ func getHttpClient() *http.Client {
 		TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
 	}
 
-	return &http.Client{Transport: tr}
+	if singleInstance == nil {
+		clientLock.Lock()
+		if singleInstance == nil {
+			singleInstance = &http.Client{Transport: tr}
+		}
+		clientLock.Unlock()
+	}
+
+	return singleInstance
 }
 
 func getBodyContent(response *http.Response) ([]byte, error) {
-	body, err := ioutil.ReadAll(response.Body)
+	body, err := io.ReadAll(response.Body)
 	if err != nil {
 		log.Err(err).Msg("Error reading response body")
 		return nil, errors.New("error parsing request body")
