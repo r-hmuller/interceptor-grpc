@@ -85,3 +85,11 @@ func GetCheckpointEnabled() bool {
 	}
 	return checkpointEnabled
 }
+
+func GetEnableTrace() bool {
+	enableTrace, err := strconv.ParseBool(os.Getenv("ENABLE_TRACE"))
+	if err != nil {
+		return false
+	}
+	return enableTrace
+}
