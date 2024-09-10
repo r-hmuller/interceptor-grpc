@@ -9,24 +9,59 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"runtime/pprof"
 	"runtime/trace"
 	"sync"
 	"time"
 )
 
 func main() {
+	duration := 160 * time.Second
+
 	if config.GetEnableTrace() {
 		go func() {
 			f, _ := os.Create("trace.out")
 			trace.Start(f)
 			start := time.Now()
-			duration := 153 * time.Second
 
 			for time.Since(start) < duration {
 				// Your code here
 				time.Sleep(1 * time.Second) // Adjust the sleep duration as needed
 			}
 			trace.Stop()
+		}()
+
+		go func() {
+			f, err := os.Create("cpu.pprof")
+			if err != nil {
+				log.Fatal("could not create CPU profile: ", err)
+			}
+
+			if err := pprof.StartCPUProfile(f); err != nil {
+				log.Fatal("could not start CPU profile: ", err)
+			}
+			start := time.Now()
+			for time.Since(start) < duration {
+				// Your code here
+				time.Sleep(1 * time.Second) // Adjust the sleep duration as needed
+			}
+			pprof.StopCPUProfile()
+			f.Close()
+		}()
+
+		go func() {
+			f, err := os.Create("mem.pprof")
+			if err != nil {
+				log.Fatal("could not create memory profile: ", err)
+			}
+
+			start := time.Now()
+			for time.Since(start) < duration {
+				// Your code here
+				time.Sleep(1 * time.Second) // Adjust the sleep duration as needed
+			}
+			pprof.WriteHeapProfile(f)
+			f.Close()
 		}()
 	}
 
