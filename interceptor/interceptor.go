@@ -33,6 +33,11 @@ type QueueHttpRequest struct {
 func ProcessQueue() {
 	for {
 		time.Sleep(50 * time.Millisecond)
+
+		if crController.IsContainerUnavailable.Load() {
+			return
+		}
+
 		if QueueLength.Load() == 0 {
 			crController.IsRunningPendingRequestQueue.Store(false)
 			return
@@ -45,7 +50,13 @@ func ProcessQueue() {
 		crController.IsRunningPendingRequestQueue.Store(true)
 
 		//Check if it can be processed, aka not in snapshot or restoring
-		go processRequest(request.Response, request.Request)
+		// Wait until can be processed or return
+		if !crController.IsDoingSnapshot.Load() &&
+			!crController.IsRestoringSnapshot.Load() &&
+			!crController.IsContainerUnavailable.Load() {
+			go processRequest(request.Response, request.Request)
+
+		}
 	}
 }
 
