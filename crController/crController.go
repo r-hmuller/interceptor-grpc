@@ -3,7 +3,7 @@ package crController
 import (
 	"context"
 	"google.golang.org/grpc"
-	crController "interceptor-grpc/protos"
+	"interceptor-grpc/protos"
 	"log"
 	"net"
 	"sync/atomic"
@@ -15,18 +15,18 @@ var IsRestoringSnapshot atomic.Bool
 var IsContainerUnavailable atomic.Bool
 
 type server struct {
-	crController.UnimplementedFailureServiceServer
+	protos.UnimplementedFailureServiceServer
 }
 
-func (s *server) StopRequests(_ context.Context, _ *crController.RestoreRequest) (*crController.RestoreResponse, error) {
+func (s *server) StopRequests(_ context.Context, _ *protos.RestoreRequest) (*protos.RestoreResponse, error) {
 	IsContainerUnavailable.Store(true)
-	return &crController.RestoreResponse{Message: true}, nil
+	return &protos.RestoreResponse{Message: true}, nil
 }
 
-func (s *server) ReprocessRequests(_ context.Context, _ *crController.RestoreRequest) (*crController.RestoreResponse, error) {
+func (s *server) ReprocessRequests(_ context.Context, _ *protos.RestoreRequest) (*protos.RestoreResponse, error) {
 	IsContainerUnavailable.Store(false)
 
-	return &crController.RestoreResponse{Message: true}, nil
+	return &protos.RestoreResponse{Message: true}, nil
 }
 
 func IsUnavailable() bool {
@@ -40,7 +40,7 @@ func RunGRPCServer() {
 	}
 
 	s := grpc.NewServer()
-	crController.RegisterFailureServiceServer(s, &server{})
+	protos.RegisterFailureServiceServer(s, &server{})
 	log.Printf("gRPC server listening at %v", lis.Addr())
 	if err := s.Serve(lis); err != nil {
 		log.Fatalf("failed to serve: %v", err)

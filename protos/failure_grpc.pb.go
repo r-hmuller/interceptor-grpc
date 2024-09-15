@@ -4,7 +4,7 @@
 // - protoc             v5.27.0
 // source: failure.proto
 
-package crController
+package protos
 
 import (
 	context "context"
@@ -19,8 +19,8 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	FailureService_StopRequests_FullMethodName      = "/crController.FailureService/StopRequests"
-	FailureService_ReprocessRequests_FullMethodName = "/crController.FailureService/ReprocessRequests"
+	FailureService_StopRequests_FullMethodName      = "/protos.FailureService/StopRequests"
+	FailureService_ReprocessRequests_FullMethodName = "/protos.FailureService/ReprocessRequests"
 )
 
 // FailureServiceClient is the client API for FailureService service.
@@ -142,7 +142,7 @@ func _FailureService_ReprocessRequests_Handler(srv interface{}, ctx context.Cont
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
 var FailureService_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "crController.FailureService",
+	ServiceName: "protos.FailureService",
 	HandlerType: (*FailureServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{

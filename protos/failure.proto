@@ -1,8 +1,8 @@
 syntax = "proto3";
 
-option go_package = "github.com/pascalallen/grpc-go/crController";
+option go_package = "github.com/rhmuller/interceptor-grpc/protos";
 
-package crController;
+package protos;
 
 service FailureService {
   rpc StopRequests(RestoreRequest) returns (RestoreResponse) {}
