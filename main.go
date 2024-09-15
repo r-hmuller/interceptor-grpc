@@ -16,7 +16,8 @@ func main() {
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go startListener()
-
+	wg.Add(1)
+	go interceptor.ProcessQueue()
 	wg.Wait()
 }
 
