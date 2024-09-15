@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"github.com/gorilla/mux"
 	"interceptor-grpc/config"
+	"interceptor-grpc/crController"
 	"interceptor-grpc/interceptor"
 	"log"
 	"net/http"
@@ -18,6 +19,9 @@ func main() {
 	go startListener()
 	wg.Add(1)
 	go interceptor.ProcessQueue()
+	wg.Add(1)
+	go crController.RunGRPCServer()
+
 	wg.Wait()
 }
 
