@@ -6,6 +6,7 @@ import (
 	"errors"
 	"github.com/rs/zerolog/log"
 	"interceptor-grpc/config"
+	"interceptor-grpc/crController"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -29,12 +30,36 @@ type QueueHttpRequest struct {
 	Response http.ResponseWriter
 }
 
+func ProcessQueue() {
+	for {
+		time.Sleep(50 * time.Millisecond)
+		if QueueLength.Load() == 0 {
+			crController.IsRunningPendingRequestQueue.Store(false)
+			return
+		}
+		request, err := GetRequestFromQueue()
+		if err != nil {
+			crController.IsRunningPendingRequestQueue.Store(false)
+			return
+		}
+		crController.IsRunningPendingRequestQueue.Store(true)
+
+		//Check if it can be processed, aka not in snapshot or restoring
+		go processRequest(request.Response, request.Request)
+	}
+}
+
 func Handler(w http.ResponseWriter, r *http.Request) {
 	processRequest(w, r)
 
 }
 
 func processRequest(responseWriter http.ResponseWriter, request *http.Request) {
+	// Check if it can be processed
+	if crController.IsUnavailable() {
+		AddRequestToQueue(QueueHttpRequest{Request: request, Response: responseWriter})
+	}
+
 	startTime := time.Now()
 	requestNumber := config.SaveRequestToBuffer(request)
 
