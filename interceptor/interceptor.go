@@ -8,7 +8,6 @@ import (
 	"interceptor-grpc/config"
 	"interceptor-grpc/crController"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"strconv"
 	"sync"
@@ -71,7 +70,6 @@ func processRequest(responseWriter http.ResponseWriter, request *http.Request) {
 		AddRequestToQueue(QueueHttpRequest{Request: request, Response: responseWriter})
 	}
 
-	startTime := time.Now()
 	requestNumber := config.SaveRequestToBuffer(request)
 
 	request.URL.Host = config.GetApplicationURL()
@@ -85,12 +83,9 @@ func processRequest(responseWriter http.ResponseWriter, request *http.Request) {
 	}
 
 	config.UpdateRequestToProcessed(requestNumber)
-	elapsedTime := time.Since(startTime)
-	log.Info().Msgf("All flow for request %d took %s", requestNumber, elapsedTime)
 }
 
 func sendRequest(destiny *http.Request, uuid uint64) HTTPResponse {
-	startTime := time.Now()
 	response := HTTPResponse{}
 	client := getHttpClient()
 	method := destiny.Method
@@ -102,12 +97,7 @@ func sendRequest(destiny *http.Request, uuid uint64) HTTPResponse {
 		return response
 	}
 
-	log.Info().Msgf("Path: %s", destiny.URL.Path)
-	log.Info().Msgf("Query: %s", destiny.URL.RawQuery)
-	log.Info().Msgf("Query: %s", destiny.URL.Query().Encode())
 	fullPath := config.GetApplicationURL() + destiny.URL.Path + "?" + destiny.URL.RawQuery
-
-	log.Info().Msgf("Sending request %d to %s", uuid, fullPath)
 
 	req, err := http.NewRequest(method, fullPath, bytes.NewReader(requestBody))
 	if err != nil {
@@ -143,9 +133,6 @@ func sendRequest(destiny *http.Request, uuid uint64) HTTPResponse {
 	response.Body = body
 	response.InterceptorControl = strconv.FormatUint(uuid, 10)
 
-	log.Info().Msgf("Response for request %d: %d", uuid, response.StatusCode)
-	elapsedTime := time.Since(startTime)
-	log.Info().Msgf("Send request %d took %s", uuid, elapsedTime)
 	return response
 }
 
@@ -170,7 +157,7 @@ func getHttpClient() *http.Client {
 }
 
 func getBodyContent(response *http.Response) ([]byte, error) {
-	body, err := ioutil.ReadAll(response.Body)
+	body, err := io.ReadAll(response.Body)
 	if err != nil {
 		log.Err(err).Msg("Error reading response body")
 		return nil, errors.New("error parsing request body")
