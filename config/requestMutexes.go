@@ -17,6 +17,10 @@ var processedMap sync.Map
 var requestsMap sync.Map
 var requestNumber atomic.Uint64
 
+func GetLatestRequestNumber() uint64 {
+	return requestNumber.Load()
+}
+
 func SaveRequestToBuffer(request *http.Request) uint64 {
 	num := requestNumber.Add(1)
 	requestsMap.Store(num, request)
