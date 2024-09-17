@@ -24,6 +24,15 @@ func VerifyEnvVars() {
 		panic("APPLICATION_URL can't be empty")
 	}
 
+	podName, ok := os.LookupEnv("POD_NAME")
+	if !ok {
+		panic("Couldn't find the POD_NAME variable")
+	}
+
+	if podName == "" {
+		panic("POD_NAME can't be empty")
+	}
+
 	interceptorPort, ok := os.LookupEnv("INTERCEPTOR_PORT")
 
 	if !ok {
@@ -56,6 +65,33 @@ func VerifyEnvVars() {
 	if _, err := strconv.ParseBool(checkpointEnabled); err != nil {
 		panic("CHECKPOINT_ENABLED must be a boolean")
 	}
+
+	// @TODO: add REGISTRY_URL
+
+	nameSpace, ok := os.LookupEnv("NAMESPACE")
+	if !ok {
+		panic("Couldn't find the NAMESPACE variable")
+	}
+	if nameSpace == "" {
+		panic("NAMESPACE can't be empty")
+	}
+
+	serviceName, ok := os.LookupEnv("SERVICE_NAME")
+	if !ok {
+		panic("Couldn't find the SERVICE_NAME variable")
+	}
+	if serviceName == "" {
+		panic("SERVICE_NAME can't be empty")
+	}
+
+	registryName, ok := os.LookupEnv("REGISTRY_NAME")
+	if !ok {
+		panic("Couldn't find the REGISTRY_NAME variable")
+	}
+	if registryName == "" {
+		panic("REGISTRY_NAME can't be empty")
+	}
+
 }
 
 func GetApplicationURL() string {
@@ -68,6 +104,18 @@ func GetInterceptorPort() string {
 		interceptorPort = ":" + interceptorPort
 	}
 	return interceptorPort
+}
+
+func GetNamespace() string {
+	return os.Getenv("NAMESPACE")
+}
+
+func GetServiceName() string {
+	return os.Getenv("SERVICE_NAME")
+}
+
+func GetRegistryName() string {
+	return os.Getenv("REGISTRY_NAME")
 }
 
 func GetHeartBeatEnabled() bool {
@@ -92,4 +140,8 @@ func GetEnableTrace() bool {
 		return false
 	}
 	return enableTrace
+}
+
+func GetPodName() string {
+	return os.Getenv("POD_NAME")
 }

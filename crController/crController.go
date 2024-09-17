@@ -16,6 +16,7 @@ var IsContainerUnavailable atomic.Bool
 
 type server struct {
 	protos.UnimplementedFailureServiceServer
+	protos.UnimplementedSnapshotRPCServiceServer
 }
 
 func (s *server) StopRequests(_ context.Context, _ *protos.RestoreRequest) (*protos.RestoreResponse, error) {
@@ -27,6 +28,13 @@ func (s *server) ReprocessRequests(_ context.Context, _ *protos.RestoreRequest) 
 	IsContainerUnavailable.Store(false)
 
 	return &protos.RestoreResponse{Message: true}, nil
+}
+
+func (s *server) Reply(_ context.Context, _ *protos.ReplySnapshotRequest) (*protos.AckResponse, error) {
+	// Aqui o snapshot já terminou, então precisa liberar os locks
+	// Deletar todos os requests menores que o requestNumber
+	// Prosseguir com os requests que estão na fila
+	return &protos.AckResponse{Response: true, Error: ""}, nil
 }
 
 func IsUnavailable() bool {

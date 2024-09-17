@@ -54,7 +54,6 @@ func ProcessQueue() {
 			!crController.IsRestoringSnapshot.Load() &&
 			!crController.IsContainerUnavailable.Load() {
 			go processRequest(request.Response, request.Request)
-
 		}
 	}
 }
