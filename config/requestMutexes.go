@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 const (
@@ -32,14 +33,27 @@ func UpdateRequestToProcessed(number uint64) {
 	processedMap.Store(number, processed)
 }
 
-func ClearRequestsMap() {
+func UpdateRequestsToSnapshoted(latestRequest uint64) {
 	processedMap.Range(func(key, value interface{}) bool {
-		if value == snapshoted {
-			processedMap.Delete(key)
-			requestsMap.Delete(key)
+		if key.(uint64) < latestRequest {
+			processedMap.Store(key, snapshoted)
 		}
 		return true
 	})
+
+}
+
+func ClearRequestsMap() {
+	tick := time.Tick(500 * time.Millisecond)
+	for range tick {
+		processedMap.Range(func(key, value interface{}) bool {
+			if value == snapshoted {
+				processedMap.Delete(key)
+				requestsMap.Delete(key)
+			}
+			return true
+		})
+	}
 }
 
 func GetReprocessableRequests() []*http.Request {

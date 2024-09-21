@@ -21,7 +21,8 @@ func main() {
 	go interceptor.ProcessQueue()
 	wg.Add(1)
 	go crController.RunGRPCServer()
-
+	wg.Add(1)
+	go config.ClearRequestsMap()
 	wg.Wait()
 }
 

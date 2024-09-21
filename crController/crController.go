@@ -3,6 +3,7 @@ package crController
 import (
 	"context"
 	"google.golang.org/grpc"
+	"interceptor-grpc/config"
 	"interceptor-grpc/protos"
 	"log"
 	"net"
@@ -30,10 +31,14 @@ func (s *server) ReprocessRequests(_ context.Context, _ *protos.RestoreRequest) 
 	return &protos.RestoreResponse{Message: true}, nil
 }
 
-func (s *server) Reply(_ context.Context, _ *protos.ReplySnapshotRequest) (*protos.AckResponse, error) {
+func (s *server) Reply(_ context.Context, replySnapshot *protos.ReplySnapshotRequest) (*protos.AckResponse, error) {
 	// Aqui o snapshot já terminou, então precisa liberar os locks
 	// Deletar todos os requests menores que o requestNumber
 	// Prosseguir com os requests que estão na fila
+
+	config.UpdateRequestsToSnapshoted(replySnapshot.LatestRequest)
+	IsDoingSnapshot.Store(false)
+
 	return &protos.AckResponse{Response: true, Error: ""}, nil
 }
 
