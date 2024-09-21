@@ -5,6 +5,7 @@ import (
 	"github.com/gorilla/mux"
 	"interceptor-grpc/config"
 	"interceptor-grpc/crController"
+	"interceptor-grpc/heartbeat"
 	"interceptor-grpc/interceptor"
 	"log"
 	"net/http"
@@ -23,6 +24,8 @@ func main() {
 	go crController.RunGRPCServer()
 	wg.Add(1)
 	go config.ClearRequestsMap()
+	wg.Add(1)
+	go heartbeat.Monitor()
 	wg.Wait()
 }
 
@@ -30,6 +33,8 @@ func startListener() {
 	// Disable SSL validation, because some client may have invalid certificates
 	http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 	router := mux.NewRouter()
+	router.PathPrefix("/_internal/pod/restart/start").HandlerFunc(crController.PodBeganRestarting)
+	router.PathPrefix("/_internal/pod/restart/end").HandlerFunc(crController.PodEndedRestarting)
 	router.PathPrefix("/").HandlerFunc(interceptor.Handler)
 
 	log.Printf("Starting interceptor on port %s\n", config.GetInterceptorPort())

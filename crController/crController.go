@@ -7,6 +7,7 @@ import (
 	"interceptor-grpc/protos"
 	"log"
 	"net"
+	"net/http"
 	"sync/atomic"
 )
 
@@ -44,6 +45,16 @@ func (s *server) Reply(_ context.Context, replySnapshot *protos.ReplySnapshotReq
 
 func IsUnavailable() bool {
 	return IsRunningPendingRequestQueue.Load() || IsDoingSnapshot.Load() || IsRestoringSnapshot.Load() || IsContainerUnavailable.Load()
+}
+
+func PodBeganRestarting(w http.ResponseWriter, _ *http.Request) {
+	IsContainerUnavailable.Store(true)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func PodEndedRestarting(w http.ResponseWriter, _ *http.Request) {
+	IsContainerUnavailable.Store(false)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func RunGRPCServer() {

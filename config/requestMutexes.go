@@ -44,7 +44,7 @@ func UpdateRequestsToSnapshoted(latestRequest uint64) {
 }
 
 func ClearRequestsMap() {
-	tick := time.Tick(500 * time.Millisecond)
+	tick := time.Tick(60 * time.Second)
 	for range tick {
 		processedMap.Range(func(key, value interface{}) bool {
 			if value == snapshoted {

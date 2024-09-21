@@ -92,6 +92,13 @@ func VerifyEnvVars() {
 		panic("REGISTRY_NAME can't be empty")
 	}
 
+	heartBeathPath, ok := os.LookupEnv("HEARTBEAT_PATH")
+	if !ok {
+		panic("Couldn't find the HEARTBEAT_PATH variable")
+	}
+	if heartBeathPath == "" {
+		panic("HEARTBEAT_PATH can't be empty")
+	}
 }
 
 func GetApplicationURL() string {
@@ -104,6 +111,10 @@ func GetInterceptorPort() string {
 		interceptorPort = ":" + interceptorPort
 	}
 	return interceptorPort
+}
+
+func GetHeartBeatPath() string {
+	return os.Getenv("HEARTBEAT_PATH")
 }
 
 func GetNamespace() string {
