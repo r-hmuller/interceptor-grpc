@@ -66,8 +66,6 @@ func VerifyEnvVars() {
 		panic("CHECKPOINT_ENABLED must be a boolean")
 	}
 
-	// @TODO: add REGISTRY_URL
-
 	nameSpace, ok := os.LookupEnv("NAMESPACE")
 	if !ok {
 		panic("Couldn't find the NAMESPACE variable")
@@ -98,6 +96,34 @@ func VerifyEnvVars() {
 	}
 	if heartBeathPath == "" {
 		panic("HEARTBEAT_PATH can't be empty")
+	}
+
+	daemonGrpcUrl, ok := os.LookupEnv("DAEMON_GRPC_URL")
+	if !ok {
+		panic("Couldn't find the DAEMON_GRPC_URL variable")
+	}
+	if daemonGrpcUrl == "" {
+		panic("DAEMON_GRPC_URL can't be empty")
+	}
+
+	selfGrpcUrl, ok := os.LookupEnv("GRPC_URL")
+	if !ok {
+		panic("Couldn't find the GRPC_URL variable")
+	}
+	if selfGrpcUrl == "" {
+		panic("GRPC_URL can't be empty")
+	}
+
+	checkpointInterval, ok := os.LookupEnv("CHECKPOINT_INTERVAL")
+	if !ok {
+		panic("Couldn't find the CHECKPOINT_INTERVAL variable")
+	}
+	if checkpointInterval == "" {
+		panic("CHECKPOINT_INTERVAL can't be empty")
+	}
+	_, err = strconv.Atoi(checkpointInterval)
+	if err != nil {
+		panic("CHECKPOINT_INTERVAL must be a number")
 	}
 }
 
@@ -155,4 +181,20 @@ func GetEnableTrace() bool {
 
 func GetPodName() string {
 	return os.Getenv("POD_NAME")
+}
+
+func GetDaemonGrpcUrl() string {
+	return os.Getenv("DAEMON_GRPC_URL")
+}
+
+func GetSelfGrpcUrl() string {
+	return os.Getenv("GRPC_URL")
+}
+
+func GetCheckpointInterval() int {
+	checkpointInterval, err := strconv.Atoi(os.Getenv("CHECKPOINT_INTERVAL"))
+	if err != nil {
+		panic("CHECKPOINT_INTERVAL must be a number")
+	}
+	return checkpointInterval
 }
