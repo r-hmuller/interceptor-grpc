@@ -1,16 +1,20 @@
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"github.com/gorilla/mux"
 	"interceptor-grpc/config"
 	"interceptor-grpc/crController"
 	"interceptor-grpc/heartbeat"
 	"interceptor-grpc/interceptor"
+	"interceptor-grpc/snapshotter"
 	"log"
 	"net/http"
 	"sync"
 )
+
+var ctx = context.Background()
 
 func main() {
 	config.VerifyEnvVars()
@@ -24,8 +28,16 @@ func main() {
 	go crController.RunGRPCServer()
 	wg.Add(1)
 	go config.ClearRequestsMap()
-	wg.Add(1)
-	go heartbeat.Monitor()
+
+	if config.GetHeartBeatEnabled() {
+		wg.Add(1)
+		go heartbeat.Monitor()
+	}
+	if config.GetCheckpointEnabled() {
+		wg.Add(1)
+		go snapshotter.GenerateSnapshots(ctx)
+	}
+
 	wg.Wait()
 }
 
