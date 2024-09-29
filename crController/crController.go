@@ -58,9 +58,9 @@ func PodEndedRestarting(w http.ResponseWriter, _ *http.Request) {
 }
 
 func RunGRPCServer() {
-	lis, err := net.Listen("tcp", ":50051")
+	lis, err := net.Listen("tcp", config.GetSelfGrpcUrl())
 	if err != nil {
-		log.Fatalf("failed to listen on port 50051: %v", err)
+		log.Fatalf("failed to listen on port %s: %v", config.GetSelfGrpcUrl(), err)
 	}
 
 	s := grpc.NewServer()

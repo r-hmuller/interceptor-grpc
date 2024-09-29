@@ -24,15 +24,6 @@ func VerifyEnvVars() {
 		panic("APPLICATION_URL can't be empty")
 	}
 
-	podName, ok := os.LookupEnv("POD_NAME")
-	if !ok {
-		panic("Couldn't find the POD_NAME variable")
-	}
-
-	if podName == "" {
-		panic("POD_NAME can't be empty")
-	}
-
 	interceptorPort, ok := os.LookupEnv("INTERCEPTOR_PORT")
 
 	if !ok {
@@ -177,10 +168,6 @@ func GetEnableTrace() bool {
 		return false
 	}
 	return enableTrace
-}
-
-func GetPodName() string {
-	return os.Getenv("POD_NAME")
 }
 
 func GetDaemonGrpcUrl() string {
