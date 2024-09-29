@@ -32,8 +32,6 @@ func generateSnapshot(ctx context.Context) {
 		LatestRequest: config.GetLatestRequestNumber(),
 	}
 
-	//Aqui preciso enviar via gRPC para o servidor de snapshot
-
 	conn, err := grpc.NewClient(config.GetDaemonGrpcUrl(), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Err(err).Msg("failed to connect to gRPC server at localhost:50051")
