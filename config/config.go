@@ -17,7 +17,7 @@ var IsSnapshotBeingTaken = false
 func VerifyEnvVars() {
 	applicationUrl, ok := os.LookupEnv("APPLICATION_URL")
 	if !ok {
-		panic("Couldn't find the INTERCEPTOR_PORT variable")
+		panic("Couldn't find the APPLICATION_URL variable")
 	}
 
 	if applicationUrl == "" {
@@ -41,7 +41,7 @@ func VerifyEnvVars() {
 
 	heartBeatEnabled, ok := os.LookupEnv("HEARTBEAT_ENABLED")
 	if !ok {
-		panic("Couldn't find the INTERCEPTOR_PORT variable")
+		panic("Couldn't find the HEARTBEAT_ENABLED variable")
 	}
 
 	if _, err := strconv.ParseBool(heartBeatEnabled); err != nil {
