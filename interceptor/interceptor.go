@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"crypto/tls"
 	"errors"
-	"github.com/rs/zerolog/log"
 	"interceptor-grpc/config"
 	"interceptor-grpc/crController"
 	"io"
@@ -12,6 +11,8 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/rs/zerolog/log"
 )
 
 var lock = &sync.RWMutex{}
@@ -59,8 +60,20 @@ func ProcessQueue() {
 }
 
 func Handler(w http.ResponseWriter, r *http.Request) {
-	processRequest(w, r)
+	startTime := time.Now()
+	timeout := 5 * time.Minute
 
+	for crController.IsDoingSnapshot.Load() ||
+		crController.IsRestoringSnapshot.Load() ||
+		crController.IsContainerUnavailable.Load() {
+		if time.Since(startTime) > timeout {
+			http.Error(w, "request timed out while waiting for container to be available", http.StatusBadGateway)
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	processRequest(w, r)
 }
 
 func processRequest(responseWriter http.ResponseWriter, request *http.Request) {

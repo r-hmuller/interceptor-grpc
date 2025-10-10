@@ -2,12 +2,14 @@ package snapshotter
 
 import (
 	"context"
+	"interceptor-grpc/config"
+	"interceptor-grpc/crController"
+	"interceptor-grpc/protos"
+	"time"
+
 	"github.com/rs/zerolog/log"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
-	"interceptor-grpc/config"
-	"interceptor-grpc/protos"
-	"time"
 )
 
 func GenerateSnapshots(ctx context.Context) {
@@ -25,6 +27,10 @@ func GenerateSnapshots(ctx context.Context) {
 }
 
 func generateSnapshot(ctx context.Context) {
+	for crController.IsRunningPendingRequestQueue.Load() {
+		time.Sleep(100 * time.Millisecond)
+	}
+
 	_ = &protos.CreateSnapshotRequest{
 		ServiceName:   config.GetServiceName(),
 		RegistryName:  config.GetRegistryName(),
