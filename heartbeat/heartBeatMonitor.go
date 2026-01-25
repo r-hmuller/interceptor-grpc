@@ -38,10 +38,12 @@ func Monitor() {
 			numberRequestsFailed = 0
 		}
 		if numberRequestsFailed > 5 {
+			log.Error().Msg("Heartbeat failed more than 5 times, marking container as unavailable")
 			crController.IsContainerUnavailable.Store(true)
 
 		}
 		if numberRequestsSuccess > 5 {
+			log.Info().Msg("Heartbeat succeeded more than 5 times, marking container as available")
 			crController.IsContainerUnavailable.Store(false)
 		}
 	}

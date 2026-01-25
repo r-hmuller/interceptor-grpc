@@ -15,6 +15,7 @@ import (
 func GenerateSnapshots(ctx context.Context) {
 	tick := time.Tick(time.Duration(config.GetCheckpointInterval()) * time.Second)
 	for range tick {
+		log.Info().Msg("Checkpoint interval reached, generating snapshot...")
 		if config.IsSnapshotBeingTaken {
 			continue
 		}
@@ -38,12 +39,21 @@ func generateSnapshot(ctx context.Context) {
 		LatestRequest: config.GetLatestRequestNumber(),
 	}
 
+	log.Info().Msg("Connecting to gRPC server at " + config.GetDaemonGrpcUrl())
+
 	conn, err := grpc.NewClient(config.GetDaemonGrpcUrl(), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Err(err).Msg("failed to connect to gRPC server at localhost:50051")
 	}
 	defer conn.Close()
 
+	log.Info().Msg("Sending snapshot creation request to gRPC server...")
+	log.Info().Msgf("Snapshot request details: ServiceName=%s, RegistryName=%s, Namespace=%s, LatestRequest=%d",
+		config.GetServiceName(),
+		config.GetRegistryName(),
+		config.GetNamespace(),
+		config.GetLatestRequestNumber(),
+	)
 	c := protos.NewSnapshotRPCServiceClient(conn)
 	response, err := c.Create(ctx, &protos.CreateSnapshotRequest{})
 	if err != nil {
