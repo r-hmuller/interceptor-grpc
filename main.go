@@ -30,12 +30,16 @@ func main() {
 	go config.ClearRequestsMap()
 
 	if config.GetHeartBeatEnabled() {
+		log.Println("Heartbeat monitoring is enabled.")
 		wg.Add(1)
 		go heartbeat.Monitor()
 	}
 	if config.GetCheckpointEnabled() {
+		log.Println("Checkpointing is enabled.")
 		wg.Add(1)
 		go snapshotter.GenerateSnapshots(ctx)
+	} else {
+		log.Println("Checkpointing is disabled.")
 	}
 
 	wg.Wait()
