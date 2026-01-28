@@ -17,6 +17,7 @@ func GenerateSnapshots(ctx context.Context) {
 	for range tick {
 		log.Info().Msg("Checkpoint interval reached, generating snapshot...")
 		if config.IsSnapshotBeingTaken {
+			log.Info().Msg("Snapshot is already being taken, skipping this interval.")
 			continue
 		}
 		config.SnapshotLock.Lock()
@@ -32,7 +33,7 @@ func generateSnapshot(ctx context.Context) {
 		time.Sleep(100 * time.Millisecond)
 	}
 
-	_ = &protos.CreateSnapshotRequest{
+	snapshotRequest := &protos.CreateSnapshotRequest{
 		ServiceName:   config.GetServiceName(),
 		RegistryName:  config.GetRegistryName(),
 		Namespace:     config.GetNamespace(),
@@ -49,13 +50,13 @@ func generateSnapshot(ctx context.Context) {
 
 	log.Info().Msg("Sending snapshot creation request to gRPC server...")
 	log.Info().Msgf("Snapshot request details: ServiceName=%s, RegistryName=%s, Namespace=%s, LatestRequest=%d",
-		config.GetServiceName(),
-		config.GetRegistryName(),
-		config.GetNamespace(),
-		config.GetLatestRequestNumber(),
+		snapshotRequest.ServiceName,
+		snapshotRequest.RegistryName,
+		snapshotRequest.Namespace,
+		snapshotRequest.LatestRequest,
 	)
 	c := protos.NewSnapshotRPCServiceClient(conn)
-	response, err := c.Create(ctx, &protos.CreateSnapshotRequest{})
+	response, err := c.Create(ctx, snapshotRequest)
 	if err != nil {
 		log.Err(err).Msg("failed to create snapshot")
 	}
