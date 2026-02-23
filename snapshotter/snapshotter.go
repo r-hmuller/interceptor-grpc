@@ -63,4 +63,5 @@ func generateSnapshot(ctx context.Context) {
 	if response.GetResponse() != true {
 		log.Error().Msg("failed to create snapshot: " + response.GetError())
 	}
+	config.IsSnapshotBeingTaken = false
 }
