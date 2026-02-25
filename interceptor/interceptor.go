@@ -34,28 +34,33 @@ func ProcessQueue() {
 	for {
 		time.Sleep(50 * time.Millisecond)
 
+		// Skip processing if container is unavailable, but don't exit the loop
 		if crController.IsContainerUnavailable.Load() {
-			return
+			crController.IsRunningPendingRequestQueue.Store(false)
+			continue
 		}
 
+		// Skip if queue is empty, but keep the loop running
 		if QueueLength.Load() == 0 {
 			crController.IsRunningPendingRequestQueue.Store(false)
-			return
+			continue
 		}
+
+		// Skip if snapshot or restore is in progress
+		if crController.IsDoingSnapshot.Load() || crController.IsRestoringSnapshot.Load() {
+			continue
+		}
+
 		request, err := GetRequestFromQueue()
 		if err != nil {
 			crController.IsRunningPendingRequestQueue.Store(false)
-			return
+			continue
 		}
+
 		crController.IsRunningPendingRequestQueue.Store(true)
 
-		//Check if it can be processed, aka not in snapshot or restoring
-		// Wait until can be processed or return
-		if !crController.IsDoingSnapshot.Load() &&
-			!crController.IsRestoringSnapshot.Load() &&
-			!crController.IsContainerUnavailable.Load() {
-			go processRequest(request.Response, request.Request)
-		}
+		// Process the request from the queue
+		go processRequest(request.Response, request.Request)
 	}
 }
 
@@ -77,12 +82,14 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 }
 
 func processRequest(responseWriter http.ResponseWriter, request *http.Request) {
-	// Check if it can be processed
+	// Check if it can be processed - if unavailable, queue and return
 	if crController.IsUnavailable() {
 		AddRequestToQueue(QueueHttpRequest{Request: request, Response: responseWriter})
+		return
 	}
 
-	requestNumber := config.SaveRequestToBuffer(request)
+	// Save request with ResponseWriter for potential reprocessing after recovery
+	requestNumber := config.SaveRequestToBuffer(request, responseWriter)
 
 	request.URL.Host = config.GetApplicationURL()
 	serverResponse := HTTPResponse{}
