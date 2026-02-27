@@ -12,19 +12,33 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
+var snapshotStartTime time.Time
+
 func GenerateSnapshots(ctx context.Context) {
 	tick := time.Tick(time.Duration(config.GetCheckpointInterval()) * time.Second)
+	maxSnapshotDuration := 5 * time.Minute
 	for range tick {
 		log.Info().Msg("Checkpoint interval reached, generating snapshot...")
 
 		// Lock before checking to prevent race condition
 		config.SnapshotLock.Lock()
 		if config.IsSnapshotBeingTaken {
+			elapsed := time.Since(snapshotStartTime)
+			if elapsed > maxSnapshotDuration {
+				config.SnapshotLock.Unlock()
+				log.Warn().
+					Dur("elapsed", elapsed).
+					Dur("max_duration", maxSnapshotDuration).
+					Msg("Snapshot has been in progress for too long, forcing lock release")
+				releaseSnapshotLocks()
+				continue
+			}
 			config.SnapshotLock.Unlock()
 			log.Info().Msg("Snapshot is already being taken, skipping this interval.")
 			continue
 		}
 		config.IsSnapshotBeingTaken = true
+		snapshotStartTime = time.Now()
 		config.SnapshotLock.Unlock()
 
 		generateSnapshot(ctx)
