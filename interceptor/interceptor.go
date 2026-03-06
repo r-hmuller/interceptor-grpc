@@ -60,7 +60,11 @@ func ProcessQueue() {
 		crController.IsRunningPendingRequestQueue.Store(true)
 
 		// Process the request from the queue
-		go processRequest(request.Response, request.Request)
+		crController.InFlightRequests.Add(1)
+		go func() {
+			defer crController.InFlightRequests.Done()
+			processRequest(request.Response, request.Request)
+		}()
 	}
 }
 
@@ -77,6 +81,9 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
+
+	crController.InFlightRequests.Add(1)
+	defer crController.InFlightRequests.Done()
 
 	processRequest(w, r)
 }
