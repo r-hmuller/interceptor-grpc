@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"net/http"
+	"sync"
 	"sync/atomic"
 
 	"github.com/rs/zerolog/log"
@@ -16,6 +17,7 @@ var IsRunningPendingRequestQueue atomic.Bool
 var IsDoingSnapshot atomic.Bool
 var IsRestoringSnapshot atomic.Bool
 var IsContainerUnavailable atomic.Bool
+var InFlightRequests sync.WaitGroup
 
 // ReprocessCallback is a function type for adding requests back to the queue
 // This callback is set by the interceptor package to avoid circular imports

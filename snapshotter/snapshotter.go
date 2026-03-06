@@ -54,18 +54,23 @@ func releaseSnapshotLocks() {
 }
 
 func generateSnapshot(ctx context.Context) {
-	// Wait for pending queue to drain with timeout
-	waitStart := time.Now()
-	maxWaitTime := 30 * time.Second
-	for crController.IsRunningPendingRequestQueue.Load() {
-		if time.Since(waitStart) > maxWaitTime {
-			log.Warn().Msg("Timeout waiting for pending request queue to drain, proceeding with snapshot")
-			break
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-
+	// Block new requests first
 	crController.IsDoingSnapshot.Store(true)
+
+	// Wait for all in-flight HTTP requests to complete
+	waitDone := make(chan struct{})
+	go func() {
+		crController.InFlightRequests.Wait()
+		close(waitDone)
+	}()
+
+	maxWaitTime := 30 * time.Second
+	select {
+	case <-waitDone:
+		log.Info().Msg("All in-flight requests completed, proceeding with snapshot")
+	case <-time.After(maxWaitTime):
+		log.Warn().Msg("Timeout waiting for in-flight requests to complete, proceeding with snapshot")
+	}
 
 	snapshotRequest := &protos.CreateSnapshotRequest{
 		ServiceName:   config.GetServiceName(),
