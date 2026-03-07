@@ -18,8 +18,6 @@ func GenerateSnapshots(ctx context.Context) {
 	tick := time.Tick(time.Duration(config.GetCheckpointInterval()) * time.Second)
 	maxSnapshotDuration := 5 * time.Minute
 	for range tick {
-		log.Info().Msg("Checkpoint interval reached, generating snapshot...")
-
 		// Lock before checking to prevent race condition
 		config.SnapshotLock.Lock()
 		if config.IsSnapshotBeingTaken {
@@ -34,7 +32,6 @@ func GenerateSnapshots(ctx context.Context) {
 				continue
 			}
 			config.SnapshotLock.Unlock()
-			log.Info().Msg("Snapshot is already being taken, skipping this interval.")
 			continue
 		}
 		config.IsSnapshotBeingTaken = true
@@ -67,9 +64,8 @@ func generateSnapshot(ctx context.Context) {
 	maxWaitTime := 30 * time.Second
 	select {
 	case <-waitDone:
-		log.Info().Msg("All in-flight requests completed, proceeding with snapshot")
 	case <-time.After(maxWaitTime):
-		log.Warn().Msg("Timeout waiting for in-flight requests to complete, proceeding with snapshot")
+		log.Warn().Msg("Timeout waiting for in-flight requests, proceeding with snapshot")
 	}
 
 	snapshotRequest := &protos.CreateSnapshotRequest{
@@ -78,8 +74,6 @@ func generateSnapshot(ctx context.Context) {
 		Namespace:     config.GetNamespace(),
 		LatestRequest: config.GetLatestRequestNumber(),
 	}
-
-	log.Info().Msg("Connecting to gRPC server at " + config.GetDaemonGrpcUrl())
 
 	// Create connection with timeout
 	connCtx, connCancel := context.WithTimeout(ctx, 10*time.Second)
@@ -92,14 +86,6 @@ func generateSnapshot(ctx context.Context) {
 		return
 	}
 	defer conn.Close()
-
-	log.Info().Msg("Sending snapshot creation request to gRPC server...")
-	log.Info().Msgf("Snapshot request details: ServiceName=%s, RegistryName=%s, Namespace=%s, LatestRequest=%d",
-		snapshotRequest.ServiceName,
-		snapshotRequest.RegistryName,
-		snapshotRequest.Namespace,
-		snapshotRequest.LatestRequest,
-	)
 
 	c := protos.NewSnapshotRPCServiceClient(conn)
 
@@ -116,6 +102,5 @@ func generateSnapshot(ctx context.Context) {
 		return
 	}
 
-	log.Info().Msg("Snapshot request sent successfully, waiting for Reply from daemon...")
-	// Note: The locks will be released when Reply() is called by k8s-cr-daemon
+	// The locks will be released when Reply() is called by k8s-cr-daemon
 }

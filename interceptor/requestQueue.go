@@ -6,7 +6,6 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/rs/zerolog/log"
 )
 
 var QueueLength = atomic.Uint32{}
@@ -19,10 +18,6 @@ func AddRequestToQueue(queueRequest QueueHttpRequest) {
 
 	queue = append(queue, queueRequest)
 	QueueLength.Add(1)
-
-	log.Debug().
-		Uint32("queueLength", QueueLength.Load()).
-		Msg("Request added to queue")
 }
 
 // AddToQueueForReprocess is a callback-friendly wrapper for AddRequestToQueue

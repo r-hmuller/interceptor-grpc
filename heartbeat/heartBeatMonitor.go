@@ -1,7 +1,6 @@
 package heartbeat
 
 import (
-	"github.com/rs/zerolog/log"
 	"interceptor-grpc/config"
 	"interceptor-grpc/crController"
 	"io"
@@ -30,7 +29,6 @@ func Monitor() {
 		defer resp.Body.Close()
 		_, err = io.ReadAll(resp.Body)
 		if resp.StatusCode > 299 {
-			log.Error().Msgf("Heartbeat failed with status code %d", resp.StatusCode)
 			numberRequestsFailed++
 			numberRequestsSuccess = 0
 		} else {
@@ -38,12 +36,9 @@ func Monitor() {
 			numberRequestsFailed = 0
 		}
 		if numberRequestsFailed > 5 {
-			log.Error().Msg("Heartbeat failed more than 5 times, marking container as unavailable")
 			crController.IsContainerUnavailable.Store(true)
-
 		}
 		if numberRequestsSuccess > 5 {
-			log.Info().Msg("Heartbeat succeeded more than 5 times, marking container as available")
 			crController.IsContainerUnavailable.Store(false)
 		}
 	}
