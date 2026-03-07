@@ -5,8 +5,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/rs/zerolog/log"
 )
 
 const (
@@ -102,9 +100,6 @@ func ClearRequestsMap() {
 		}
 		requestsMapMutex.Unlock()
 
-		if len(keysToDelete) > 0 {
-			log.Debug().Int("count", len(keysToDelete)).Msg("Cleared snapshoted requests from memory")
-		}
 	}
 }
 

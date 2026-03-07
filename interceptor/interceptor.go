@@ -154,8 +154,6 @@ func sendRequest(destiny *http.Request, uuid uint64) HTTPResponse {
 		response.StatusCode = 500
 		return response
 	}
-	log.Info().Msgf("Body: %s", string(body))
-
 	response.Body = body
 	response.InterceptorControl = strconv.FormatUint(uuid, 10)
 

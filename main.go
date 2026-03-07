@@ -34,16 +34,12 @@ func main() {
 	go config.ClearRequestsMap()
 
 	if config.GetHeartBeatEnabled() {
-		log.Info().Msg("Heartbeat monitoring is enabled")
 		wg.Add(1)
 		go heartbeat.Monitor()
 	}
 	if config.GetCheckpointEnabled() {
-		log.Info().Msg("Checkpointing is enabled")
 		wg.Add(1)
 		go snapshotter.GenerateSnapshots(ctx)
-	} else {
-		log.Info().Msg("Checkpointing is disabled")
 	}
 
 	wg.Wait()
@@ -57,7 +53,6 @@ func startListener() {
 	router.PathPrefix("/_internal/pod/restart/end").HandlerFunc(crController.PodEndedRestarting)
 	router.PathPrefix("/").HandlerFunc(interceptor.Handler)
 
-	log.Info().Str("port", config.GetInterceptorPort()).Msg("Starting interceptor")
 	if err := http.ListenAndServe(config.GetInterceptorPort(), router); err != nil {
 		log.Fatal().Err(err).Msg("Failed to start HTTP server")
 	}
