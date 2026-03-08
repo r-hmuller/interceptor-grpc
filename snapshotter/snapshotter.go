@@ -13,6 +13,7 @@ import (
 )
 
 var snapshotStartTime time.Time
+var replyTimeout = 4 * time.Minute
 
 func GenerateSnapshots(ctx context.Context) {
 	tick := time.Tick(time.Duration(config.GetCheckpointInterval()) * time.Second)
@@ -102,5 +103,15 @@ func generateSnapshot(ctx context.Context) {
 		return
 	}
 
-	// The locks will be released when Reply() is called by k8s-cr-daemon
+	// Safety net: release locks if Reply() is not received in time.
+	// Without this, a daemon failure after Create() leaves the system blocked indefinitely.
+	go func() {
+		time.Sleep(replyTimeout)
+		if crController.IsDoingSnapshot.Load() {
+			log.Warn().
+				Dur("timeout", replyTimeout).
+				Msg("Reply() not received in time after successful Create(), forcing lock release")
+			releaseSnapshotLocks()
+		}
+	}()
 }

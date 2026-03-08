@@ -63,7 +63,7 @@ func ProcessQueue() {
 		crController.InFlightRequests.Add(1)
 		go func() {
 			defer crController.InFlightRequests.Done()
-			processRequest(request.Response, request.Request)
+			processRequest(request.Response, request.Request, true)
 		}()
 	}
 }
@@ -85,12 +85,18 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 	crController.InFlightRequests.Add(1)
 	defer crController.InFlightRequests.Done()
 
-	processRequest(w, r)
+	processRequest(w, r, false)
 }
 
-func processRequest(responseWriter http.ResponseWriter, request *http.Request) {
-	// Check if it can be processed - if unavailable, queue and return
-	if crController.IsUnavailable() {
+func processRequest(responseWriter http.ResponseWriter, request *http.Request, fromQueue bool) {
+	// Check if it can be processed - if unavailable, queue and return.
+	// Requests already coming from the queue skip the IsRunningPendingRequestQueue check
+	// to avoid an infinite re-queue loop.
+	if !fromQueue && crController.IsUnavailable() {
+		AddRequestToQueue(QueueHttpRequest{Request: request, Response: responseWriter})
+		return
+	}
+	if fromQueue && (crController.IsDoingSnapshot.Load() || crController.IsRestoringSnapshot.Load() || crController.IsContainerUnavailable.Load()) {
 		AddRequestToQueue(QueueHttpRequest{Request: request, Response: responseWriter})
 		return
 	}
