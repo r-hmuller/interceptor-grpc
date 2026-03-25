@@ -2,6 +2,7 @@ package config
 
 import (
 	"net/http"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -120,6 +121,10 @@ func GetReprocessableRequests() []*BufferedRequest {
 			}
 		}
 		return true
+	})
+
+	sort.Slice(reprocessableRequests, func(i, j int) bool {
+		return reprocessableRequests[i].RequestNumber < reprocessableRequests[j].RequestNumber
 	})
 
 	return reprocessableRequests
