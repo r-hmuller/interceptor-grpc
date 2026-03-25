@@ -39,6 +39,7 @@ func GenerateSnapshots(ctx context.Context) {
 		snapshotStartTime = time.Now()
 		config.SnapshotLock.Unlock()
 
+		log.Info().Msg("Starting snapshot")
 		generateSnapshot(ctx)
 	}
 }
@@ -54,6 +55,7 @@ func releaseSnapshotLocks() {
 func generateSnapshot(ctx context.Context) {
 	// Block new requests first
 	crController.IsDoingSnapshot.Store(true)
+	log.Info().Msg("Snapshot started: blocking new requests")
 
 	// Wait for all in-flight HTTP requests to complete
 	waitDone := make(chan struct{})
@@ -65,6 +67,7 @@ func generateSnapshot(ctx context.Context) {
 	maxWaitTime := 30 * time.Second
 	select {
 	case <-waitDone:
+		log.Info().Msg("All in-flight requests drained")
 	case <-time.After(maxWaitTime):
 		log.Warn().Msg("Timeout waiting for in-flight requests, proceeding with snapshot")
 	}
@@ -76,13 +79,19 @@ func generateSnapshot(ctx context.Context) {
 		LatestRequest: config.GetLatestRequestNumber(),
 	}
 
+	log.Info().
+		Str("service", snapshotRequest.ServiceName).
+		Str("namespace", snapshotRequest.Namespace).
+		Uint64("latestRequest", snapshotRequest.LatestRequest).
+		Msg("Sending snapshot request to daemon")
+
 	// Create connection with timeout
 	connCtx, connCancel := context.WithTimeout(ctx, 10*time.Second)
 	defer connCancel()
 
 	conn, err := grpc.NewClient(config.GetDaemonGrpcUrl(), grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
-		log.Err(err).Msg("failed to connect to gRPC server")
+		log.Err(err).Str("url", config.GetDaemonGrpcUrl()).Msg("Failed to connect to daemon gRPC server")
 		releaseSnapshotLocks()
 		return
 	}
@@ -93,15 +102,17 @@ func generateSnapshot(ctx context.Context) {
 	// Use timeout context for the Create call
 	response, err := c.Create(connCtx, snapshotRequest)
 	if err != nil {
-		log.Err(err).Msg("failed to create snapshot")
+		log.Err(err).Msg("Failed to send snapshot request")
 		releaseSnapshotLocks()
 		return
 	}
 	if response.GetResponse() != true {
-		log.Error().Msg("failed to create snapshot: " + response.GetError())
+		log.Error().Str("error", response.GetError()).Msg("Daemon rejected snapshot request")
 		releaseSnapshotLocks()
 		return
 	}
+
+	log.Info().Msg("Snapshot request accepted by daemon, waiting for Reply")
 
 	// Safety net: release locks if Reply() is not received in time.
 	// Without this, a daemon failure after Create() leaves the system blocked indefinitely.
@@ -110,7 +121,7 @@ func generateSnapshot(ctx context.Context) {
 		if crController.IsDoingSnapshot.Load() {
 			log.Warn().
 				Dur("timeout", replyTimeout).
-				Msg("Reply() not received in time after successful Create(), forcing lock release")
+				Msg("Reply() not received in time, forcing lock release")
 			releaseSnapshotLocks()
 		}
 	}()

@@ -67,12 +67,20 @@ func (s *server) ReprocessRequests(_ context.Context, _ *protos.RestoreRequest) 
 }
 
 func (s *server) Reply(_ context.Context, replySnapshot *protos.ReplySnapshotRequest) (*protos.AckResponse, error) {
+	log.Info().
+		Str("status", replySnapshot.SnapshotStatus).
+		Str("service", replySnapshot.ServiceName).
+		Uint64("latestRequest", replySnapshot.LatestRequest).
+		Msg("Snapshot Reply received from daemon")
+
 	config.UpdateRequestsToSnapshoted(replySnapshot.LatestRequest)
 
 	IsDoingSnapshot.Store(false)
 	config.SnapshotLock.Lock()
 	config.IsSnapshotBeingTaken = false
 	config.SnapshotLock.Unlock()
+
+	log.Info().Msg("Snapshot complete, requests unblocked")
 
 	return &protos.AckResponse{Response: true, Error: ""}, nil
 }
