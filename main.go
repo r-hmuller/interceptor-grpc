@@ -6,13 +6,14 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/gorilla/mux"
-	"github.com/rs/zerolog/log"
 	"interceptor-grpc/config"
 	"interceptor-grpc/crController"
 	"interceptor-grpc/heartbeat"
 	"interceptor-grpc/interceptor"
 	"interceptor-grpc/snapshotter"
+
+	"github.com/gorilla/mux"
+	"github.com/rs/zerolog/log"
 )
 
 var ctx = context.Background()
@@ -38,6 +39,7 @@ func main() {
 		go heartbeat.Monitor()
 	}
 	if config.GetCheckpointEnabled() {
+		log.Info().Msg("Checkpointing is enabled, starting snapshot generator")
 		wg.Add(1)
 		go snapshotter.GenerateSnapshots(ctx)
 	}
