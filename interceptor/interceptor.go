@@ -128,6 +128,8 @@ func sendRequest(destiny *http.Request, uuid uint64) HTTPResponse {
 		response.StatusCode = 500
 		return response
 	}
+	// Restore the body so it can be re-read if this request is replayed
+	destiny.Body = io.NopCloser(bytes.NewReader(requestBody))
 
 	fullPath := config.GetApplicationURL() + destiny.URL.Path + "?" + destiny.URL.RawQuery
 
