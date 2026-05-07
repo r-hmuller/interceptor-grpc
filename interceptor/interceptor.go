@@ -175,6 +175,9 @@ func getHttpClient() *http.Client {
 		IdleConnTimeout:     5 * time.Second,
 		DisableCompression:  true,
 		TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
+		// Sem keep-alive: TCP fecha apos cada request. Evita TCP_ESTABLISHED no
+		// momento do checkpoint -- CRIU/runc nao tem flag pra dropar conexoes.
+		DisableKeepAlives: true,
 	}
 
 	if singleInstance == nil {
