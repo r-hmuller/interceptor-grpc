@@ -178,6 +178,10 @@ func GetSelfGrpcUrl() string {
 	return os.Getenv("GRPC_URL")
 }
 
+func GetDirectApplicationURL() string {
+	return os.Getenv("DIRECT_APPLICATION_URL")
+}
+
 func GetCheckpointInterval() int {
 	checkpointInterval, err := strconv.Atoi(os.Getenv("CHECKPOINT_INTERVAL"))
 	if err != nil {
