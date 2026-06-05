@@ -24,10 +24,17 @@ var InFlightRequests sync.WaitGroup
 type ReprocessCallback func(request *http.Request, responseWriter http.ResponseWriter)
 
 var reprocessCallback ReprocessCallback
+var drainConnectionsCallback func()
 
 // RegisterReprocessCallback allows the interceptor package to register its AddRequestToQueue function
 func RegisterReprocessCallback(callback ReprocessCallback) {
 	reprocessCallback = callback
+}
+
+// RegisterDrainConnectionsCallback registra a função que fecha conexões keep-alive
+// antes do checkpoint. Deve ser chamada antes do primeiro StopRequests.
+func RegisterDrainConnectionsCallback(fn func()) {
+	drainConnectionsCallback = fn
 }
 
 type server struct {
@@ -38,6 +45,12 @@ type server struct {
 func (s *server) StopRequests(_ context.Context, _ *protos.RestoreRequest) (*protos.RestoreResponse, error) {
 	IsContainerUnavailable.Store(true)
 	IsRestoringSnapshot.Store(true)
+	// Aguarda todos os requests em voo terminarem, depois drena o pool de conexões
+	// keep-alive. O CRIU requer zero conexões TCP abertas no momento do dump.
+	InFlightRequests.Wait()
+	if drainConnectionsCallback != nil {
+		drainConnectionsCallback()
+	}
 	return &protos.RestoreResponse{Message: true}, nil
 }
 
@@ -86,6 +99,13 @@ func (s *server) Reply(_ context.Context, replySnapshot *protos.ReplySnapshotReq
 }
 
 func IsUnavailable() bool {
+	// When checkpoint is disabled, IsRunningPendingRequestQueue is irrelevant:
+	// the queue is only used during checkpoint/restore cycles. Including it here
+	// when checkpoint is off causes a feedback loop where concurrent requests
+	// pile into the queue faster than it drains (50ms/iteration).
+	if !config.GetCheckpointEnabled() {
+		return IsContainerUnavailable.Load()
+	}
 	return IsRunningPendingRequestQueue.Load() || IsDoingSnapshot.Load() || IsRestoringSnapshot.Load() || IsContainerUnavailable.Load()
 }
 

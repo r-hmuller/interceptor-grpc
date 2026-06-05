@@ -87,8 +87,18 @@ func ClearRequestsMap() {
 	for range tick {
 		var keysToDelete []interface{}
 
+		// Se snapshot em andamento: remove apenas Snapshoted (aguarda o ciclo completar).
+		// Se não há snapshot: remove também Processed para evitar memory leak em runs longos
+		// sem checkpoint (entries nunca transitam para Snapshoted nesse caso).
+		SnapshotLock.Lock()
+		snapshotInProgress := IsSnapshotBeingTaken
+		SnapshotLock.Unlock()
+
 		processedMap.Range(func(key, value interface{}) bool {
-			if value == Snapshoted {
+			state := value.(int)
+			if state == Snapshoted {
+				keysToDelete = append(keysToDelete, key)
+			} else if state == Processed && !snapshotInProgress {
 				keysToDelete = append(keysToDelete, key)
 			}
 			return true
@@ -100,7 +110,6 @@ func ClearRequestsMap() {
 			requestsMap.Delete(key)
 		}
 		requestsMapMutex.Unlock()
-
 	}
 }
 

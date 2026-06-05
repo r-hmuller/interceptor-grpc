@@ -23,6 +23,7 @@ func main() {
 
 	// Register the reprocess callback for recovery mechanism
 	crController.RegisterReprocessCallback(interceptor.AddToQueueForReprocess)
+	crController.RegisterDrainConnectionsCallback(interceptor.DrainConnections)
 
 	var wg sync.WaitGroup
 	wg.Add(1)

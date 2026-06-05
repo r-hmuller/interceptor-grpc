@@ -131,7 +131,11 @@ func sendRequest(destiny *http.Request, uuid uint64) HTTPResponse {
 	// Restore the body so it can be re-read if this request is replayed
 	destiny.Body = io.NopCloser(bytes.NewReader(requestBody))
 
-	fullPath := config.GetApplicationURL() + destiny.URL.Path + "?" + destiny.URL.RawQuery
+	baseURL := config.GetApplicationURL()
+	if direct := config.GetDirectApplicationURL(); direct != "" {
+		baseURL = direct
+	}
+	fullPath := baseURL + destiny.URL.Path + "?" + destiny.URL.RawQuery
 
 	req, err := http.NewRequest(method, fullPath, bytes.NewReader(requestBody))
 	if err != nil {
@@ -169,26 +173,37 @@ func sendRequest(destiny *http.Request, uuid uint64) HTTPResponse {
 }
 
 func getHttpClient() *http.Client {
-	tr := &http.Transport{
-		MaxIdleConns:        0,
-		MaxIdleConnsPerHost: 500000,
-		IdleConnTimeout:     5 * time.Second,
-		DisableCompression:  true,
-		TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
-		// Sem keep-alive: TCP fecha apos cada request. Evita TCP_ESTABLISHED no
-		// momento do checkpoint -- CRIU/runc nao tem flag pra dropar conexoes.
-		DisableKeepAlives: true,
-	}
-
 	if singleInstance == nil {
 		lock.Lock()
 		if singleInstance == nil {
+			tr := &http.Transport{
+				MaxIdleConns:        0,
+				MaxIdleConnsPerHost: 200,
+				IdleConnTimeout:     90 * time.Second,
+				DisableCompression:  true,
+				TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
+				// Keep-alive ativo durante operação normal para evitar overhead de
+				// TCP handshake por request. Conexões são drenadas explicitamente em
+				// DrainConnections() antes de cada checkpoint (CRIU requer zero
+				// conexões TCP abertas no momento do dump).
+				DisableKeepAlives: false,
+			}
 			singleInstance = &http.Client{Transport: tr}
 		}
 		lock.Unlock()
 	}
-
 	return singleInstance
+}
+
+// DrainConnections fecha todas as conexões keep-alive do pool antes do checkpoint.
+// Chamado via callback registrado em crController.RegisterDrainConnectionsCallback.
+func DrainConnections() {
+	lock.Lock()
+	defer lock.Unlock()
+	if singleInstance != nil {
+		singleInstance.CloseIdleConnections()
+		singleInstance = nil // novo cliente criado pos-restore
+	}
 }
 
 func getBodyContent(response *http.Response) ([]byte, error) {
