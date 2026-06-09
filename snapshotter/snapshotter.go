@@ -64,12 +64,12 @@ func generateSnapshot(ctx context.Context) {
 		close(waitDone)
 	}()
 
-	maxWaitTime := 30 * time.Second
+	maxWaitTime := time.Duration(config.GetSnapshotDrainTimeout()) * time.Second
 	select {
 	case <-waitDone:
-		log.Info().Msg("All in-flight requests drained")
+		log.Info().Dur("drain_timeout", maxWaitTime).Msg("All in-flight requests drained")
 	case <-time.After(maxWaitTime):
-		log.Warn().Msg("Timeout waiting for in-flight requests, proceeding with snapshot")
+		log.Warn().Dur("drain_timeout", maxWaitTime).Msg("Timeout waiting for in-flight requests, proceeding with snapshot")
 	}
 
 	snapshotRequest := &protos.CreateSnapshotRequest{
