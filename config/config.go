@@ -189,3 +189,18 @@ func GetCheckpointInterval() int {
 	}
 	return checkpointInterval
 }
+
+// GetSnapshotDrainTimeout retorna o tempo (segundos) que o snapshot espera as
+// requisicoes em voo drenarem antes de prosseguir. Env SNAPSHOT_DRAIN_TIMEOUT;
+// default 30 se ausente/invalido.
+func GetSnapshotDrainTimeout() int {
+	v := os.Getenv("SNAPSHOT_DRAIN_TIMEOUT")
+	if v == "" {
+		return 30
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 {
+		return 30
+	}
+	return n
+}
