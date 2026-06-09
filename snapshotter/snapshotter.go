@@ -5,6 +5,7 @@ import (
 	"interceptor-grpc/config"
 	"interceptor-grpc/crController"
 	"interceptor-grpc/protos"
+	"sync/atomic"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -14,6 +15,13 @@ import (
 
 var snapshotStartTime time.Time
 var replyTimeout = 4 * time.Minute
+
+// snapshotGeneration identifies which snapshot a safety-net goroutine was armed for.
+// Without it, the goroutine from snapshot N (sleeping replyTimeout, which can coincide
+// with the checkpoint interval) wakes up exactly when snapshot N+1 starts, sees the
+// global IsDoingSnapshot flag set and releases N+1's locks, unblocking traffic while
+// the daemon is still dumping/pushing.
+var snapshotGeneration atomic.Uint64
 
 func GenerateSnapshots(ctx context.Context) {
 	tick := time.Tick(time.Duration(config.GetCheckpointInterval()) * time.Second)
@@ -37,6 +45,7 @@ func GenerateSnapshots(ctx context.Context) {
 		}
 		config.IsSnapshotBeingTaken = true
 		snapshotStartTime = time.Now()
+		snapshotGeneration.Add(1)
 		config.SnapshotLock.Unlock()
 
 		log.Info().Msg("Starting snapshot")
@@ -64,12 +73,12 @@ func generateSnapshot(ctx context.Context) {
 		close(waitDone)
 	}()
 
-	maxWaitTime := 30 * time.Second
+	maxWaitTime := time.Duration(config.GetSnapshotDrainTimeout()) * time.Second
 	select {
 	case <-waitDone:
-		log.Info().Msg("All in-flight requests drained")
+		log.Info().Dur("drain_timeout", maxWaitTime).Msg("All in-flight requests drained")
 	case <-time.After(maxWaitTime):
-		log.Warn().Msg("Timeout waiting for in-flight requests, proceeding with snapshot")
+		log.Warn().Dur("drain_timeout", maxWaitTime).Msg("Timeout waiting for in-flight requests, proceeding with snapshot")
 	}
 
 	snapshotRequest := &protos.CreateSnapshotRequest{
@@ -116,11 +125,14 @@ func generateSnapshot(ctx context.Context) {
 
 	// Safety net: release locks if Reply() is not received in time.
 	// Without this, a daemon failure after Create() leaves the system blocked indefinitely.
+	// Generation-guarded: only releases the snapshot it was armed for, never a later one.
+	gen := snapshotGeneration.Load()
 	go func() {
 		time.Sleep(replyTimeout)
-		if crController.IsDoingSnapshot.Load() {
+		if crController.IsDoingSnapshot.Load() && snapshotGeneration.Load() == gen {
 			log.Warn().
 				Dur("timeout", replyTimeout).
+				Uint64("generation", gen).
 				Msg("Reply() not received in time, forcing lock release")
 			releaseSnapshotLocks()
 		}
