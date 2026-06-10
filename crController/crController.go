@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/rs/zerolog/log"
 	"google.golang.org/grpc"
@@ -18,6 +19,11 @@ var IsDoingSnapshot atomic.Bool
 var IsRestoringSnapshot atomic.Bool
 var IsContainerUnavailable atomic.Bool
 var InFlightRequests sync.WaitGroup
+
+// LastTrafficRelease marca (unix nano) o último desbloqueio de tráfego pós-
+// snapshot — o início de uma janela de flush de backlog. O heartbeat usa como
+// período de graça pra não confundir a sobrecarga do flush com pod morto.
+var LastTrafficRelease atomic.Int64
 
 // ReprocessCallback is a function type for adding requests back to the queue.
 // This callback is set by the interceptor package to avoid circular imports.
@@ -99,6 +105,7 @@ func (s *server) Reply(_ context.Context, replySnapshot *protos.ReplySnapshotReq
 	config.SnapshotLock.Lock()
 	config.IsSnapshotBeingTaken = false
 	config.SnapshotLock.Unlock()
+	LastTrafficRelease.Store(time.Now().UnixNano())
 
 	log.Info().Msg("Snapshot complete, requests unblocked")
 
