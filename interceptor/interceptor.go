@@ -18,16 +18,17 @@ import (
 var lock = &sync.RWMutex{}
 var singleInstance *http.Client
 
-type HTTPResponse struct {
-	StatusCode         int
-	Header             http.Header
-	Body               []byte
-	InterceptorControl string
-}
+// Tempo máximo que um request enfileirado espera o ciclo de recuperação
+// (snapshot/restore + drenagem da fila). Igual ao timeout do spin-gate.
+const queueWaitTimeout = 5 * time.Minute
 
+// QueueHttpRequest carrega uma CÓPIA do request (nunca o *http.Request ou o
+// ResponseWriter vivos, que morrem quando o handler retorna). RespCh != nil
+// significa que há um handler bloqueado esperando o resultado pra responder
+// ao cliente; nil significa replay-only (cliente já foi respondido).
 type QueueHttpRequest struct {
-	Request  *http.Request
-	Response http.ResponseWriter
+	Data   config.RequestData
+	RespCh chan config.Result
 }
 
 func ProcessQueue() {
@@ -59,12 +60,22 @@ func ProcessQueue() {
 
 		crController.IsRunningPendingRequestQueue.Store(true)
 
-		// Process the request from the queue
 		crController.InFlightRequests.Add(1)
-		go func() {
+		go func(item QueueHttpRequest) {
 			defer crController.InFlightRequests.Done()
-			processRequest(request.Response, request.Request, true)
-		}()
+			// Snapshot/restore pode ter começado entre o pop e aqui: devolve pra fila.
+			if crController.IsDoingSnapshot.Load() || crController.IsRestoringSnapshot.Load() ||
+				crController.IsContainerUnavailable.Load() {
+				AddRequestToQueue(item)
+				return
+			}
+			res := forwardBuffered(item.Data)
+			if item.RespCh != nil {
+				// Canal buffered(1): se o handler já desistiu (timeout/desconexão),
+				// o send não bloqueia e o resultado é descartado.
+				item.RespCh <- res
+			}
+		}(request)
 	}
 }
 
@@ -82,94 +93,101 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(50 * time.Millisecond)
 	}
 
+	// Copia o request inteiro aqui: o *http.Request e o ResponseWriter só são
+	// válidos enquanto este handler está vivo, então nada fora desta função
+	// (fila, buffer de reprocess) pode segurá-los.
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "error reading request body", http.StatusInternalServerError)
+		return
+	}
+	data := config.RequestData{
+		Method: r.Method,
+		Path:   r.URL.Path,
+		Query:  r.URL.RawQuery,
+		Header: r.Header.Clone(),
+		Body:   body,
+	}
+
+	if crController.IsUnavailable() {
+		// Fila de recuperação: o handler fica bloqueado esperando o resultado
+		// pelo canal — é ele quem escreve a resposta, nunca o worker. Sem isso
+		// o net/http finaliza a resposta como 200 vazio assim que o handler
+		// retorna, e o worker escreveria num writer morto.
+		respCh := make(chan config.Result, 1)
+		AddRequestToQueue(QueueHttpRequest{Data: data, RespCh: respCh})
+		select {
+		case res := <-respCh:
+			writeResult(w, res)
+		case <-r.Context().Done():
+			// Cliente desconectou. O worker ainda aplica o request (estado);
+			// o canal buffered absorve o resultado sem bloquear ninguém.
+		case <-time.After(queueWaitTimeout):
+			http.Error(w, "timed out waiting for recovery queue", http.StatusGatewayTimeout)
+		}
+		return
+	}
+
 	crController.InFlightRequests.Add(1)
 	defer crController.InFlightRequests.Done()
-
-	processRequest(w, r, false)
+	writeResult(w, forwardBuffered(data))
 }
 
-func processRequest(responseWriter http.ResponseWriter, request *http.Request, fromQueue bool) {
-	// Check if it can be processed - if unavailable, queue and return.
-	// Requests already coming from the queue skip the IsRunningPendingRequestQueue check
-	// to avoid an infinite re-queue loop.
-	if !fromQueue && crController.IsUnavailable() {
-		AddRequestToQueue(QueueHttpRequest{Request: request, Response: responseWriter})
-		return
-	}
-	if fromQueue && (crController.IsDoingSnapshot.Load() || crController.IsRestoringSnapshot.Load() || crController.IsContainerUnavailable.Load()) {
-		AddRequestToQueue(QueueHttpRequest{Request: request, Response: responseWriter})
-		return
-	}
-
-	// Save request with ResponseWriter for potential reprocessing after recovery
-	requestNumber := config.SaveRequestToBuffer(request, responseWriter)
-
-	request.URL.Host = config.GetApplicationURL()
-	serverResponse := HTTPResponse{}
-	serverResponse = sendRequest(request, requestNumber)
-
-	responseWriter.WriteHeader(serverResponse.StatusCode)
-	_, err := responseWriter.Write(serverResponse.Body)
-	if err != nil {
-		log.Err(err).Msg("Error writing response")
-	}
-
+// forwardBuffered registra o request no buffer de reprocess, encaminha pra
+// aplicação e marca como processado.
+func forwardBuffered(data config.RequestData) config.Result {
+	requestNumber := config.SaveRequestToBuffer(data)
+	res := sendRequest(data, requestNumber)
 	config.UpdateRequestToProcessed(requestNumber)
+	return res
 }
 
-func sendRequest(destiny *http.Request, uuid uint64) HTTPResponse {
-	response := HTTPResponse{}
-	client := getHttpClient()
-	method := destiny.Method
-
-	requestBody, err := io.ReadAll(destiny.Body)
-	if err != nil {
-		log.Printf("Error reading body: %v", err)
-		response.StatusCode = 500
-		return response
+func writeResult(w http.ResponseWriter, res config.Result) {
+	w.WriteHeader(res.Status)
+	if len(res.Body) > 0 {
+		if _, err := w.Write(res.Body); err != nil {
+			log.Err(err).Msg("Error writing response")
+		}
 	}
-	// Restore the body so it can be re-read if this request is replayed
-	destiny.Body = io.NopCloser(bytes.NewReader(requestBody))
+}
+
+func sendRequest(data config.RequestData, uuid uint64) config.Result {
+	client := getHttpClient()
 
 	baseURL := config.GetApplicationURL()
 	if direct := config.GetDirectApplicationURL(); direct != "" {
 		baseURL = direct
 	}
-	fullPath := baseURL + destiny.URL.Path + "?" + destiny.URL.RawQuery
+	fullPath := baseURL + data.Path + "?" + data.Query
 
-	req, err := http.NewRequest(method, fullPath, bytes.NewReader(requestBody))
+	req, err := http.NewRequest(data.Method, fullPath, bytes.NewReader(data.Body))
 	if err != nil {
 		log.Err(err).Msg("Error creating request")
-		response.StatusCode = 500
-		return response
+		return config.Result{Status: 500}
 	}
+	for name, values := range data.Header {
+		for _, value := range values {
+			req.Header.Add(name, value)
+		}
+	}
+	req.Header.Set("Interceptor-Controller", strconv.FormatUint(uuid, 10))
 
-	req.Header.Add("Interceptor-Controller", strconv.FormatUint(uuid, 10))
-	addHeaders(destiny, req)
 	resp, err := client.Do(req)
 	if err != nil {
 		log.Err(err).Msg("Error sending request")
-		response.StatusCode = 500
-		return response
+		return config.Result{Status: 500}
 	}
-	response.StatusCode = resp.StatusCode
-	response.Header = resp.Header
 	body, err := getBodyContent(resp)
+	closeErr := resp.Body.Close()
 	if err != nil {
 		log.Err(err).Msg("Error getting body content")
-		response.StatusCode = 500
-		return response
+		return config.Result{Status: 500}
 	}
-	err = resp.Body.Close()
-	if err != nil {
-		log.Err(err).Msg("Error closing response body")
-		response.StatusCode = 500
-		return response
+	if closeErr != nil {
+		log.Err(closeErr).Msg("Error closing response body")
+		return config.Result{Status: 500}
 	}
-	response.Body = body
-	response.InterceptorControl = strconv.FormatUint(uuid, 10)
-
-	return response
+	return config.Result{Status: resp.StatusCode, Body: body}
 }
 
 func getHttpClient() *http.Client {
@@ -213,12 +231,4 @@ func getBodyContent(response *http.Response) ([]byte, error) {
 		return nil, errors.New("error parsing request body")
 	}
 	return body, nil
-}
-
-func addHeaders(original *http.Request, created *http.Request) {
-	for name, values := range original.Header {
-		for _, value := range values {
-			created.Header.Add(name, value)
-		}
-	}
 }
