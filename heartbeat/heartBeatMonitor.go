@@ -1,15 +1,29 @@
 package heartbeat
 
 import (
-	"interceptor-grpc/config"
-	"interceptor-grpc/crController"
 	"io"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
+
+	"interceptor-grpc/config"
+	"interceptor-grpc/crController"
+
+	"github.com/rs/zerolog/log"
 )
 
 var hbClient = &http.Client{Transport: &http.Transport{DisableKeepAlives: true}}
+
+// canaryKey é a chave reservada do canário de regressão de estado — fora do
+// range usado pelos benchmarks/seeds (que ficam abaixo de ~2M).
+const canaryKey = "999999999"
+
+// lastCanary é o último valor que ESTE interceptor escreveu (ou adotou) no
+// canário. Se a leitura regredir, o backend foi restaurado de um checkpoint
+// antigo e o buffer pós-snapshot precisa de replay.
+var lastCanary uint64
 
 func Monitor() {
 	// This function should be called in a go routine
@@ -54,7 +68,103 @@ func Monitor() {
 			crController.IsContainerUnavailable.Store(true)
 		}
 		if numberRequestsSuccess > 5 {
+			// Transição indisponível -> disponível = recuperação detectada.
+			// Re-enfileira o buffer pós-snapshot ANTES de liberar o tráfego,
+			// pra que os replays drenem antes das requests novas.
+			if crController.IsContainerUnavailable.Load() {
+				n := crController.ReplayBufferedRequests()
+				log.Warn().Int("replayed", n).
+					Msg("Recovery detected by heartbeat: buffered requests queued for replay")
+			}
 			crController.IsContainerUnavailable.Store(false)
 		}
+
+		// Canário de regressão: cobre o caso em que o pod volta RÁPIDO demais
+		// pro contador de falhas (menos de 6 ticks fora) — o estado ainda assim
+		// voltou pro último checkpoint e o replay precisa disparar.
+		if numberRequestsFailed == 0 && !crController.IsContainerUnavailable.Load() {
+			checkCanary(applicationURL)
+		}
 	}
+}
+
+// checkCanary lê o canário no backend e compara com o último valor escrito.
+// Regressão (valor menor, ou chave sumida) => o backend foi restaurado de um
+// checkpoint anterior => replay do buffer. Depois avança e regrava o canário.
+func checkCanary(appURL string) {
+	cur, found, err := canaryGet(appURL)
+	if err != nil {
+		return // backend instável neste tick; o contador de falhas cuida disso
+	}
+	if found {
+		if lastCanary == 0 {
+			// Interceptor (re)iniciou: adota o valor existente como base.
+			lastCanary = cur
+		} else if cur < lastCanary {
+			stateRegressionRecovery()
+		}
+	} else if lastCanary > 0 {
+		// Canário sumiu: restore pra um checkpoint anterior à sua criação.
+		stateRegressionRecovery()
+	}
+	lastCanary++
+	if err := canaryPost(appURL, lastCanary); err != nil {
+		lastCanary-- // não conseguiu gravar: não avança a régua
+	}
+}
+
+// stateRegressionRecovery bloqueia brevemente a admissão, re-enfileira o buffer
+// pós-snapshot e libera — os replays drenam antes das requests novas.
+func stateRegressionRecovery() {
+	log.Warn().Uint64("last_canary", lastCanary).
+		Msg("State regression detected (canary rolled back): backend restored from older checkpoint")
+	crController.IsContainerUnavailable.Store(true)
+	n := crController.ReplayBufferedRequests()
+	crController.IsContainerUnavailable.Store(false)
+	log.Warn().Int("replayed", n).Msg("State regression recovery: buffered requests queued for replay")
+}
+
+func canaryGet(appURL string) (uint64, bool, error) {
+	resp, err := hbClient.Get(appURL + "/?key=" + canaryKey)
+	if err != nil {
+		return 0, false, err
+	}
+	defer resp.Body.Close()
+	body, readErr := io.ReadAll(resp.Body)
+	if readErr != nil {
+		return 0, false, readErr
+	}
+	if resp.StatusCode == http.StatusNotFound {
+		return 0, false, nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		return 0, false, errBadStatus
+	}
+	v := strings.Trim(strings.TrimSpace(string(body)), "\"")
+	n, parseErr := strconv.ParseUint(v, 10, 64)
+	if parseErr != nil {
+		// Valor ilegível: não dá pra raciocinar sobre regressão neste tick.
+		return 0, false, parseErr
+	}
+	return n, true, nil
+}
+
+var errBadStatus = errBadStatusType{}
+
+type errBadStatusType struct{}
+
+func (errBadStatusType) Error() string { return "canary get: unexpected status" }
+
+func canaryPost(appURL string, val uint64) error {
+	form := url.Values{"key": {canaryKey}, "value": {strconv.FormatUint(val, 10)}}
+	resp, err := hbClient.PostForm(appURL+"/", form)
+	if err != nil {
+		return err
+	}
+	_, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode > 299 {
+		return errBadStatus
+	}
+	return nil
 }

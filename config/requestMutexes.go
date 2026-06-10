@@ -86,9 +86,11 @@ func ClearRequestsMap() {
 	for range tick {
 		var keysToDelete []interface{}
 
-		// Se snapshot em andamento: remove apenas Snapshoted (aguarda o ciclo completar).
-		// Se não há snapshot: remove também Processed para evitar memory leak em runs longos
-		// sem checkpoint (entries nunca transitam para Snapshoted nesse caso).
+		// Snapshoted: sempre coletável (já está durável no checkpoint).
+		// Processed: só coletável quando checkpoint está DESLIGADO (evita memory
+		// leak em runs longos sem snapshot). Com checkpoint ligado, Processed é
+		// exatamente o conjunto que o replay re-aplica se o backend restaurar um
+		// checkpoint antigo — coletá-lo entre snapshots quebraria a recuperação.
 		SnapshotLock.Lock()
 		snapshotInProgress := IsSnapshotBeingTaken
 		SnapshotLock.Unlock()
@@ -97,7 +99,7 @@ func ClearRequestsMap() {
 			state := value.(int)
 			if state == Snapshoted {
 				keysToDelete = append(keysToDelete, key)
-			} else if state == Processed && !snapshotInProgress {
+			} else if state == Processed && !snapshotInProgress && !GetCheckpointEnabled() {
 				keysToDelete = append(keysToDelete, key)
 			}
 			return true
