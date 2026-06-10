@@ -81,6 +81,8 @@ func releaseSnapshotLocks() {
 	config.SnapshotLock.Lock()
 	config.IsSnapshotBeingTaken = false
 	config.SnapshotLock.Unlock()
+	// Também é um desbloqueio de tráfego: marca o início da janela de flush.
+	crController.LastTrafficRelease.Store(time.Now().UnixNano())
 }
 
 func generateSnapshot(ctx context.Context) {
