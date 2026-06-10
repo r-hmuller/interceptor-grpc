@@ -68,20 +68,23 @@ func Monitor() {
 			crController.IsContainerUnavailable.Store(true)
 		}
 		if numberRequestsSuccess > 5 {
-			// Transição indisponível -> disponível = recuperação detectada.
-			// Re-enfileira o buffer pós-snapshot ANTES de liberar o tráfego,
-			// pra que os replays drenem antes das requests novas.
+			// Transição indisponível -> disponível: só libera o tráfego. O
+			// replay fica EXCLUSIVAMENTE com o canário: a transição dispara em
+			// falso-positivo (flush de backlog derruba o /health sem restore
+			// nenhum) e, num restore real, dispara DEPOIS do canário, re-
+			// enfileirando o que o replay já re-registrou no buffer —
+			// amplificação (medido: 173K do canário + 197K da transição).
 			if crController.IsContainerUnavailable.Load() {
-				n := crController.ReplayBufferedRequests()
-				log.Warn().Int("replayed", n).
-					Msg("Recovery detected by heartbeat: buffered requests queued for replay")
+				log.Warn().Msg("Recovery detected by heartbeat: unblocking traffic (replay delegated to canary)")
 			}
 			crController.IsContainerUnavailable.Store(false)
 		}
 
-		// Canário de regressão: cobre o caso em que o pod volta RÁPIDO demais
-		// pro contador de falhas (menos de 6 ticks fora) — o estado ainda assim
-		// voltou pro último checkpoint e o replay precisa disparar.
+		// Canário de regressão: detector ÚNICO de restore. Todo restore real
+		// regride o contador (escrito a cada tick, monotônico; o checkpoint é
+		// sempre mais velho), inclusive quando o pod volta rápido demais pro
+		// contador de falhas. Flush/overload não regride o canário => sem
+		// falso-positivo.
 		if numberRequestsFailed == 0 && !crController.IsContainerUnavailable.Load() {
 			checkCanary(applicationURL)
 		}
