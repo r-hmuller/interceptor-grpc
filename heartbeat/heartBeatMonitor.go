@@ -1,11 +1,13 @@
 package heartbeat
 
 import (
+	"errors"
 	"io"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"interceptor-grpc/config"
@@ -14,7 +16,24 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-var hbClient = &http.Client{Transport: &http.Transport{DisableKeepAlives: true}}
+// Timeout explícito: sem ele, um GET de health pendurado num backend saturado
+// trava o loop do monitor (e lentidão viraria "falha" só quando a conexão
+// caísse, de forma errática).
+var hbClient = &http.Client{
+	Timeout:   2 * time.Second,
+	Transport: &http.Transport{DisableKeepAlives: true},
+}
+
+// flushGrace é a janela após um desbloqueio de tráfego pós-snapshot em que
+// erros de APLICAÇÃO (status>299) no health não fecham o gate: o backend está
+// digerindo o flush de backlog, não morto. Connection refused fecha SEMPRE
+// (sinal inequívoco de pod morto, independe de graça).
+const flushGrace = 60 * time.Second
+
+func inFlushGrace() bool {
+	t := crController.LastTrafficRelease.Load()
+	return t > 0 && time.Since(time.Unix(0, t)) < flushGrace
+}
 
 // canaryKey é a chave reservada do canário de regressão de estado — fora do
 // range usado pelos benchmarks/seeds (que ficam abaixo de ~2M).
@@ -48,8 +67,16 @@ func Monitor() {
 		}
 		resp, err := hbClient.Get(fullPath)
 		if err != nil {
-			numberRequestsFailed++
 			numberRequestsSuccess = 0
+			if errors.Is(err, syscall.ECONNREFUSED) {
+				// Pod morto de verdade (kube-proxy rejeita sem endpoints):
+				// conta pra fechar o gate.
+				numberRequestsFailed++
+			}
+			// Timeout/reset/etc: o backend pode estar só SATURADO (flush de
+			// backlog) — fechar o gate aqui amplifica (mais backlog → flush
+			// maior → mais timeout). Não conta pra fechar; o streak de sucesso
+			// zerado já impede reabertura prematura.
 			if numberRequestsFailed > 5 {
 				crController.IsContainerUnavailable.Store(true)
 			}
@@ -58,8 +85,11 @@ func Monitor() {
 		_, _ = io.ReadAll(resp.Body)
 		resp.Body.Close()
 		if resp.StatusCode > 299 {
-			numberRequestsFailed++
 			numberRequestsSuccess = 0
+			if !inFlushGrace() {
+				// Erro de aplicação fora da janela de flush: conta.
+				numberRequestsFailed++
+			}
 		} else {
 			numberRequestsSuccess++
 			numberRequestsFailed = 0
