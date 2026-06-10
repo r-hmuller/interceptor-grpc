@@ -42,6 +42,13 @@ func GenerateSnapshots(ctx context.Context) {
 			log.Warn().Msg("Snapshot skipped: container unavailable (outage/recovery in progress)")
 			continue
 		}
+		if crController.CanaryVerdictPending.Load() {
+			// Houve fechamento de gate (possível restore) e o canário ainda não
+			// deu veredito: snapshotar agora poderia capturar estado revertido
+			// e lavar o buffer (writes perdidos). Espera o veredito.
+			log.Warn().Msg("Snapshot skipped: canary verdict pending after gate closure")
+			continue
+		}
 
 		// Lock before checking to prevent race condition
 		config.SnapshotLock.Lock()
