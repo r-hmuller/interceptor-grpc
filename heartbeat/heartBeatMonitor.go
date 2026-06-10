@@ -67,6 +67,12 @@ func Monitor() {
 	numberRequestsSuccess := 0
 	consecutiveRefused := 0
 
+	// O canário roda em loop PRÓPRIO: no loop único, um canaryGet lento
+	// (até 30s sob flush) atrasava os ticks de health — janelas de outage
+	// podiam passar com 1 só refused (gate não fechava) e o veredito do
+	// canário ficava preso atrás do health.
+	go canaryLoop(applicationURL)
+
 	tick := time.Tick(5 * time.Second)
 	for range tick {
 		// #E: skip enquanto snapshot/restore esta acontecendo. CRIU congela o backend
@@ -87,6 +93,9 @@ func Monitor() {
 				// quando o pod restaurava rápido (medido no v5: gate nem fechou).
 				consecutiveRefused++
 				if consecutiveRefused >= 2 {
+					// Morte confirmada => restore vem aí => regressão de estado
+					// é certa: exige veredito do canário antes de reabrir.
+					crController.CanaryVerdictPending.Store(true)
 					crController.IsContainerUnavailable.Store(true)
 				}
 			}
@@ -110,9 +119,16 @@ func Monitor() {
 			numberRequestsFailed = 0
 		}
 		if numberRequestsFailed > 5 {
+			crController.CanaryVerdictPending.Store(true)
 			crController.IsContainerUnavailable.Store(true)
 		}
-		if numberRequestsSuccess > 5 {
+		if numberRequestsSuccess > 5 && crController.CanaryVerdictPending.Load() {
+			// Health saudável mas o canário ainda não deu veredito desde o
+			// fechamento: gate continua fechado até o veredito (ordem
+			// restore -> veredito -> replay -> tráfego).
+			log.Warn().Msg("Gate reopen waiting for canary verdict")
+		}
+		if numberRequestsSuccess > 5 && !crController.CanaryVerdictPending.Load() {
 			// Transição indisponível -> disponível: só libera o tráfego. O
 			// replay fica EXCLUSIVAMENTE com o canário: a transição dispara em
 			// falso-positivo (flush de backlog derruba o /health sem restore
@@ -125,16 +141,23 @@ func Monitor() {
 			crController.IsContainerUnavailable.Store(false)
 		}
 
-		// Canário de regressão: detector ÚNICO de restore. Todo restore real
-		// regride o contador (escrito a cada tick, monotônico; o checkpoint é
-		// sempre mais velho), inclusive quando o pod volta rápido demais pro
-		// contador de falhas. Flush/overload não regride o canário => sem
-		// falso-positivo. Roda assim que o health volta a responder — MESMO com
-		// o gate ainda fechado: detectar antes da reabertura enfileira o replay
-		// na frente do tráfego represado (ordem restore -> replay -> tráfego).
-		if numberRequestsSuccess > 0 {
-			checkCanary(applicationURL)
+	}
+}
+
+// canaryLoop roda o canário de regressão em ritmo próprio, independente do
+// health (um canaryGet lento não pode atrasar a detecção de morte). Todo
+// restore real regride o contador (monotônico, escrito a cada tick; o
+// checkpoint é sempre mais velho); flush/overload não regride => sem
+// falso-positivo. Lê MESMO com o gate fechado: o veredito antes da reabertura
+// enfileira o replay na frente do tráfego represado.
+func canaryLoop(appURL string) {
+	tick := time.Tick(5 * time.Second)
+	for range tick {
+		// kv congelado durante o dump: leitura seria timeout inútil.
+		if crController.IsDoingSnapshot.Load() || crController.IsRestoringSnapshot.Load() {
+			continue
 		}
+		checkCanary(appURL)
 	}
 }
 
@@ -144,7 +167,10 @@ func Monitor() {
 func checkCanary(appURL string) {
 	cur, found, err := canaryGet(appURL)
 	if err != nil {
-		return // backend instável neste tick; o contador de falhas cuida disso
+		// Instrumentação: leituras falhando em série são exatamente o que
+		// atrasa o veredito (e mantém o gate fechado) — precisa ser visível.
+		log.Warn().Err(err).Msg("Canary read failed")
+		return
 	}
 	if found {
 		if lastCanary == 0 {
@@ -156,6 +182,11 @@ func checkCanary(appURL string) {
 	} else if lastCanary > 0 {
 		// Canário sumiu: restore pra um checkpoint anterior à sua criação.
 		stateRegressionRecovery()
+	}
+	// Leitura completou: temos um veredito (limpo ou regressão+replay) — o
+	// gate pode reabrir e o snapshotter pode voltar a rodar.
+	if crController.CanaryVerdictPending.Swap(false) {
+		log.Warn().Msg("Canary verdict delivered: gate may reopen")
 	}
 	lastCanary++
 	if err := canaryPost(appURL, lastCanary); err != nil {

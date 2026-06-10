@@ -25,6 +25,15 @@ var InFlightRequests sync.WaitGroup
 // período de graça pra não confundir a sobrecarga do flush com pod morto.
 var LastTrafficRelease atomic.Int64
 
+// CanaryVerdictPending é setado quando o gate fecha (possível morte→restore)
+// e só é limpo quando o canário completa uma leitura (veredito "limpo" ou
+// "regressão+replay"). Enquanto pendente: o gate NÃO reabre e o snapshotter
+// NÃO inicia snapshot — força a ordem restore → veredito → [replay] →
+// tráfego → snapshot. Sem isso, um snapshot na fresta entre o restore e o
+// veredito captura o estado revertido e marca o buffer como Snapshoted sem
+// que os writes estejam nele (perda permanente — medido 2x com intervalo 180s).
+var CanaryVerdictPending atomic.Bool
+
 // ReprocessCallback is a function type for adding requests back to the queue.
 // This callback is set by the interceptor package to avoid circular imports.
 // It receives a request COPY: the live *http.Request/ResponseWriter die when
