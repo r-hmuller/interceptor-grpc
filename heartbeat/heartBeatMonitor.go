@@ -24,6 +24,17 @@ var hbClient = &http.Client{
 	Transport: &http.Transport{DisableKeepAlives: true},
 }
 
+// O canário tem cliente PRÓPRIO com timeout generoso: ele não é probe de
+// vivacidade — leitura lenta ainda é leitura válida do contador. Com o
+// timeout curto do health (2s), o canário era estrangulado exatamente na
+// janela pós-restore (backend saturado), atrasando a detecção de regressão
+// em minutos e abrindo espaço pro snapshot "lavar" o buffer (writes
+// perdidos). Medido no v5: detecção foi de 67s pra 269s.
+var canaryClient = &http.Client{
+	Timeout:   30 * time.Second,
+	Transport: &http.Transport{DisableKeepAlives: true},
+}
+
 // flushGrace é a janela após um desbloqueio de tráfego pós-snapshot em que
 // erros de APLICAÇÃO (status>299) no health não fecham o gate: o backend está
 // digerindo o flush de backlog, não morto. Connection refused fecha SEMPRE
@@ -54,6 +65,7 @@ func Monitor() {
 	// Make a request to the interceptor
 	numberRequestsFailed := 0
 	numberRequestsSuccess := 0
+	consecutiveRefused := 0
 
 	tick := time.Tick(5 * time.Second)
 	for range tick {
@@ -69,21 +81,24 @@ func Monitor() {
 		if err != nil {
 			numberRequestsSuccess = 0
 			if errors.Is(err, syscall.ECONNREFUSED) {
-				// Pod morto de verdade (kube-proxy rejeita sem endpoints):
-				// conta pra fechar o gate.
-				numberRequestsFailed++
+				// Pod morto de verdade (kube-proxy rejeita sem endpoints).
+				// Refused é inequívoco: 2 consecutivos bastam pra fechar o
+				// gate (~10s) — esperar 6 deixava a outage inteira desprotegida
+				// quando o pod restaurava rápido (medido no v5: gate nem fechou).
+				consecutiveRefused++
+				if consecutiveRefused >= 2 {
+					crController.IsContainerUnavailable.Store(true)
+				}
 			}
 			// Timeout/reset/etc: o backend pode estar só SATURADO (flush de
 			// backlog) — fechar o gate aqui amplifica (mais backlog → flush
 			// maior → mais timeout). Não conta pra fechar; o streak de sucesso
 			// zerado já impede reabertura prematura.
-			if numberRequestsFailed > 5 {
-				crController.IsContainerUnavailable.Store(true)
-			}
 			continue
 		}
 		_, _ = io.ReadAll(resp.Body)
 		resp.Body.Close()
+		consecutiveRefused = 0
 		if resp.StatusCode > 299 {
 			numberRequestsSuccess = 0
 			if !inFlushGrace() {
@@ -114,8 +129,10 @@ func Monitor() {
 		// regride o contador (escrito a cada tick, monotônico; o checkpoint é
 		// sempre mais velho), inclusive quando o pod volta rápido demais pro
 		// contador de falhas. Flush/overload não regride o canário => sem
-		// falso-positivo.
-		if numberRequestsFailed == 0 && !crController.IsContainerUnavailable.Load() {
+		// falso-positivo. Roda assim que o health volta a responder — MESMO com
+		// o gate ainda fechado: detectar antes da reabertura enfileira o replay
+		// na frente do tráfego represado (ordem restore -> replay -> tráfego).
+		if numberRequestsSuccess > 0 {
 			checkCanary(applicationURL)
 		}
 	}
@@ -158,7 +175,7 @@ func stateRegressionRecovery() {
 }
 
 func canaryGet(appURL string) (uint64, bool, error) {
-	resp, err := hbClient.Get(appURL + "/?key=" + canaryKey)
+	resp, err := canaryClient.Get(appURL + "/?key=" + canaryKey)
 	if err != nil {
 		return 0, false, err
 	}
@@ -190,7 +207,7 @@ func (errBadStatusType) Error() string { return "canary get: unexpected status" 
 
 func canaryPost(appURL string, val uint64) error {
 	form := url.Values{"key": {canaryKey}, "value": {strconv.FormatUint(val, 10)}}
-	resp, err := hbClient.PostForm(appURL+"/", form)
+	resp, err := canaryClient.PostForm(appURL+"/", form)
 	if err != nil {
 		return err
 	}
