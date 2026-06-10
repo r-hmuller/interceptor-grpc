@@ -4,6 +4,7 @@ import (
 	"context"
 	"interceptor-grpc/config"
 	"interceptor-grpc/crController"
+	"interceptor-grpc/interceptor"
 	"interceptor-grpc/protos"
 	"sync/atomic"
 	"time"
@@ -12,6 +13,12 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
+
+// Espera máxima pela drenagem da fila de recuperação antes de um snapshot.
+// Snapshot no meio da drenagem empilha bloqueio sobre o backlog do replay e
+// estica a janela efetiva de recuperação; melhor esperar a fila zerar —
+// mas com teto, pra cadência e durabilidade não ficarem reféns da fila.
+var maxQueueWait = 2 * time.Minute
 
 var snapshotStartTime time.Time
 var replyTimeout = 4 * time.Minute
@@ -48,9 +55,24 @@ func GenerateSnapshots(ctx context.Context) {
 		snapshotGeneration.Add(1)
 		config.SnapshotLock.Unlock()
 
+		if waited := waitRecoveryQueueDrain(); waited > 0 {
+			log.Info().Dur("waited", waited).Msg("Snapshot deferred until recovery queue drained")
+		}
+
 		log.Info().Msg("Starting snapshot")
 		generateSnapshot(ctx)
 	}
+}
+
+// waitRecoveryQueueDrain segura o início do snapshot enquanto a fila de
+// recuperação (replay pós-restore) ainda tem itens, até maxQueueWait.
+// Retorna quanto tempo esperou.
+func waitRecoveryQueueDrain() time.Duration {
+	start := time.Now()
+	for interceptor.QueueLength.Load() > 0 && time.Since(start) < maxQueueWait {
+		time.Sleep(2 * time.Second)
+	}
+	return time.Since(start).Round(time.Second)
 }
 
 // releaseSnapshotLocks releases all snapshot-related locks in case of failure
