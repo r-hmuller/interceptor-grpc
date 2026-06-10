@@ -57,25 +57,33 @@ func (s *server) StopRequests(_ context.Context, _ *protos.RestoreRequest) (*pro
 }
 
 func (s *server) ReprocessRequests(_ context.Context, _ *protos.RestoreRequest) (*protos.RestoreResponse, error) {
-	reprocessableRequests := config.GetReprocessableRequests()
-
-	for _, bufferedReq := range reprocessableRequests {
-		if reprocessCallback != nil {
-			// Replay-only: re-aplica na aplicação; o cliente original já foi
-			// respondido (ou desistiu), então o resultado é descartado.
-			reprocessCallback(bufferedReq.Data)
-			// O replay re-registra a entrada sob um número novo; remove a antiga
-			// pra não duplicar em ReprocessRequests futuros.
-			config.RemoveRequestFromBuffer(bufferedReq.RequestNumber)
-		} else {
-			log.Warn().Msg("Reprocess callback not registered")
-		}
-	}
+	n := ReplayBufferedRequests()
+	log.Info().Int("replayed", n).Msg("ReprocessRequests: buffered requests queued for replay")
 
 	IsRestoringSnapshot.Store(false)
 	IsContainerUnavailable.Store(false)
 
 	return &protos.RestoreResponse{Message: true}, nil
+}
+
+// ReplayBufferedRequests re-enfileira (via callback do interceptor) todas as
+// requests do buffer ainda não cobertas por um snapshot (Pending/Processed) —
+// elas foram perdidas quando o backend restaurou um checkpoint anterior.
+// Replay-only: o cliente original já foi respondido (ou desistiu), então o
+// resultado é descartado. Cada entrada sai do buffer ao ser re-enfileirada
+// (o replay re-registra sob um número novo). Retorna o total enfileirado.
+// Chamado pelo gRPC ReprocessRequests e pelo heartbeat ao detectar recuperação.
+func ReplayBufferedRequests() int {
+	if reprocessCallback == nil {
+		log.Warn().Msg("Reprocess callback not registered")
+		return 0
+	}
+	reprocessableRequests := config.GetReprocessableRequests()
+	for _, bufferedReq := range reprocessableRequests {
+		reprocessCallback(bufferedReq.Data)
+		config.RemoveRequestFromBuffer(bufferedReq.RequestNumber)
+	}
+	return len(reprocessableRequests)
 }
 
 func (s *server) Reply(_ context.Context, replySnapshot *protos.ReplySnapshotRequest) (*protos.AckResponse, error) {
