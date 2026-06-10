@@ -34,6 +34,15 @@ func GenerateSnapshots(ctx context.Context) {
 	tick := time.Tick(time.Duration(config.GetCheckpointInterval()) * time.Second)
 	maxSnapshotDuration := 5 * time.Minute
 	for range tick {
+		// NUNCA snapshotar com o gate fechado (outage/recuperação em curso):
+		// um checkpoint entre o restore e o replay captura o estado REVERTIDO
+		// e marca o buffer como Snapshoted sem que os writes estejam nele —
+		// perda permanente (medido no v5, quando a detecção do canário atrasou).
+		if crController.IsContainerUnavailable.Load() {
+			log.Warn().Msg("Snapshot skipped: container unavailable (outage/recovery in progress)")
+			continue
+		}
+
 		// Lock before checking to prevent race condition
 		config.SnapshotLock.Lock()
 		if config.IsSnapshotBeingTaken {
