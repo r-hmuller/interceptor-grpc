@@ -210,8 +210,14 @@ func getHttpClient() *http.Client {
 		lock.Lock()
 		if singleInstance == nil {
 			tr := &http.Transport{
-				MaxIdleConns:        0,
-				MaxIdleConnsPerHost: 200,
+				MaxIdleConns: 0,
+				// 4096 (era 200): no flush pós-snapshot o interceptor abre
+				// milhares de conexões simultâneas pro kv; com pool pequeno o
+				// excedente é FECHADO após o uso e vira TIME_WAIT (60s) no
+				// lado do interceptor → as ~28K portas efêmeras do pod esgotam
+				// (EADDRNOTAVAIL) e até health/canário param de conseguir
+				// discar. Pool grande = reuso em vez de churn.
+				MaxIdleConnsPerHost: 4096,
 				IdleConnTimeout:     90 * time.Second,
 				DisableCompression:  true,
 				TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},

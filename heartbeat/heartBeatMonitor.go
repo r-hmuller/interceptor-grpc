@@ -86,6 +86,13 @@ func Monitor() {
 		resp, err := hbClient.Get(fullPath)
 		if err != nil {
 			numberRequestsSuccess = 0
+			if errors.Is(err, syscall.EADDRNOTAVAIL) {
+				// Esgotamento de portas efêmeras LOCAIS (o interceptor é o
+				// cliente das conexões upstream): não diz nada sobre o backend
+				// — não conta nem como morte nem como saturação dele.
+				log.Warn().Msg("Health check failed: local ephemeral port exhaustion")
+				continue
+			}
 			if errors.Is(err, syscall.ECONNREFUSED) {
 				// Pod morto de verdade (kube-proxy rejeita sem endpoints).
 				// Refused é inequívoco: 2 consecutivos bastam pra fechar o
@@ -99,10 +106,17 @@ func Monitor() {
 					crController.IsContainerUnavailable.Store(true)
 				}
 			}
-			// Timeout/reset/etc: o backend pode estar só SATURADO (flush de
-			// backlog) — fechar o gate aqui amplifica (mais backlog → flush
-			// maior → mais timeout). Não conta pra fechar; o streak de sucesso
-			// zerado já impede reabertura prematura.
+			// Timeout/reset/etc: dentro da janela de flush é saturação
+			// esperada (fechar amplificaria); fora dela, um streak longo é
+			// morte que não conseguimos ver como refused (ex.: porta esgotada
+			// mascarando o refused — medido) — fecha o gate.
+			if !errors.Is(err, syscall.ECONNREFUSED) && !inFlushGrace() {
+				numberRequestsFailed++
+				if numberRequestsFailed > 5 {
+					crController.CanaryVerdictPending.Store(true)
+					crController.IsContainerUnavailable.Store(true)
+				}
+			}
 			continue
 		}
 		_, _ = io.ReadAll(resp.Body)
