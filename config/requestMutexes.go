@@ -1,7 +1,6 @@
 package config
 
 import (
-	"net/http"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -14,12 +13,13 @@ const (
 	Snapshoted
 )
 
-// BufferedRequest stores both the request and response writer for potential reprocessing
+// BufferedRequest stores a copy of the request data for potential reprocessing.
+// It must never hold the live *http.Request or http.ResponseWriter: both die
+// when the handler returns (Go finalizes the response and recycles them).
 type BufferedRequest struct {
-	Request        *http.Request
-	ResponseWriter http.ResponseWriter
-	RequestNumber  uint64
-	State          int
+	Data          RequestData
+	RequestNumber uint64
+	State         int
 }
 
 var processedMap sync.Map
@@ -31,15 +31,14 @@ func GetLatestRequestNumber() uint64 {
 	return requestNumber.Load()
 }
 
-// SaveRequestToBuffer stores the request with its ResponseWriter for potential reprocessing
-func SaveRequestToBuffer(request *http.Request, responseWriter http.ResponseWriter) uint64 {
+// SaveRequestToBuffer stores a copy of the request data for potential reprocessing
+func SaveRequestToBuffer(data RequestData) uint64 {
 	num := requestNumber.Add(1)
 
 	bufferedReq := &BufferedRequest{
-		Request:        request,
-		ResponseWriter: responseWriter,
-		RequestNumber:  num,
-		State:          Pending,
+		Data:          data,
+		RequestNumber: num,
+		State:         Pending,
 	}
 
 	requestsMapMutex.Lock()
@@ -155,15 +154,13 @@ func GetRequestStats() (pending, processed, snapshoted int) {
 	return
 }
 
-// MarkRequestForReprocessing resets a processed request back to pending state
-func MarkRequestForReprocessing(requestNum uint64) {
-	processedMap.Store(requestNum, Pending)
-
+// RemoveRequestFromBuffer drops an entry after it was handed back to the
+// recovery queue: the replay re-buffers it under a new number, so keeping the
+// old entry as Pending would replay it again on every future ReprocessRequests
+// and leak (ClearRequestsMap never collects Pending).
+func RemoveRequestFromBuffer(requestNum uint64) {
 	requestsMapMutex.Lock()
-	if val, ok := requestsMap.Load(requestNum); ok {
-		if bufferedReq, ok := val.(*BufferedRequest); ok {
-			bufferedReq.State = Pending
-		}
-	}
+	processedMap.Delete(requestNum)
+	requestsMap.Delete(requestNum)
 	requestsMapMutex.Unlock()
 }
