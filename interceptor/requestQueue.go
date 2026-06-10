@@ -2,10 +2,10 @@ package interceptor
 
 import (
 	"errors"
-	"net/http"
 	"sync"
 	"sync/atomic"
 
+	"interceptor-grpc/config"
 )
 
 var QueueLength = atomic.Uint32{}
@@ -20,13 +20,11 @@ func AddRequestToQueue(queueRequest QueueHttpRequest) {
 	QueueLength.Add(1)
 }
 
-// AddToQueueForReprocess is a callback-friendly wrapper for AddRequestToQueue
-// Used by crController for recovery mechanism
-func AddToQueueForReprocess(request *http.Request, responseWriter http.ResponseWriter) {
-	AddRequestToQueue(QueueHttpRequest{
-		Request:  request,
-		Response: responseWriter,
-	})
+// AddToQueueForReprocess enqueues a buffered request copy for replay after
+// recovery. RespCh stays nil: the original client was already answered (or is
+// long gone), so the result is applied to the application and discarded.
+func AddToQueueForReprocess(data config.RequestData) {
+	AddRequestToQueue(QueueHttpRequest{Data: data})
 }
 
 func GetRequestFromQueue() (QueueHttpRequest, error) {

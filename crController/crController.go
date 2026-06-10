@@ -19,9 +19,11 @@ var IsRestoringSnapshot atomic.Bool
 var IsContainerUnavailable atomic.Bool
 var InFlightRequests sync.WaitGroup
 
-// ReprocessCallback is a function type for adding requests back to the queue
-// This callback is set by the interceptor package to avoid circular imports
-type ReprocessCallback func(request *http.Request, responseWriter http.ResponseWriter)
+// ReprocessCallback is a function type for adding requests back to the queue.
+// This callback is set by the interceptor package to avoid circular imports.
+// It receives a request COPY: the live *http.Request/ResponseWriter die when
+// the original handler returns and must never be stored or replayed.
+type ReprocessCallback func(data config.RequestData)
 
 var reprocessCallback ReprocessCallback
 var drainConnectionsCallback func()
@@ -58,16 +60,13 @@ func (s *server) ReprocessRequests(_ context.Context, _ *protos.RestoreRequest) 
 	reprocessableRequests := config.GetReprocessableRequests()
 
 	for _, bufferedReq := range reprocessableRequests {
-		if bufferedReq.ResponseWriter == nil {
-			log.Warn().
-				Uint64("requestNumber", bufferedReq.RequestNumber).
-				Msg("Cannot reprocess request: ResponseWriter is nil")
-			continue
-		}
-
 		if reprocessCallback != nil {
-			reprocessCallback(bufferedReq.Request, bufferedReq.ResponseWriter)
-			config.MarkRequestForReprocessing(bufferedReq.RequestNumber)
+			// Replay-only: re-aplica na aplicação; o cliente original já foi
+			// respondido (ou desistiu), então o resultado é descartado.
+			reprocessCallback(bufferedReq.Data)
+			// O replay re-registra a entrada sob um número novo; remove a antiga
+			// pra não duplicar em ReprocessRequests futuros.
+			config.RemoveRequestFromBuffer(bufferedReq.RequestNumber)
 		} else {
 			log.Warn().Msg("Reprocess callback not registered")
 		}
