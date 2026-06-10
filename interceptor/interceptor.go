@@ -18,6 +18,10 @@ import (
 var lock = &sync.RWMutex{}
 var singleInstance *http.Client
 
+// drainSlots limita a concorrência da drenagem da fila (replay pós-recuperação
+// pode ter dezenas de milhares de entradas; sem limite inundaria a aplicação).
+var drainSlots = make(chan struct{}, 32)
+
 // Tempo máximo que um request enfileirado espera o ciclo de recuperação
 // (snapshot/restore + drenagem da fila). Igual ao timeout do spin-gate.
 const queueWaitTimeout = 5 * time.Minute
@@ -52,30 +56,36 @@ func ProcessQueue() {
 			continue
 		}
 
-		request, err := GetRequestFromQueue()
-		if err != nil {
-			crController.IsRunningPendingRequestQueue.Store(false)
-			continue
-		}
-
-		crController.IsRunningPendingRequestQueue.Store(true)
-
-		crController.InFlightRequests.Add(1)
-		go func(item QueueHttpRequest) {
-			defer crController.InFlightRequests.Done()
-			// Snapshot/restore pode ter começado entre o pop e aqui: devolve pra fila.
+		// Drena a fila inteira, não 1 item por tick: após uma recuperação o
+		// replay pode enfileirar dezenas de milhares de entradas, e 1/50ms
+		// (20/s) não escala. Concorrência limitada por drainSlots pra não
+		// inundar a aplicação.
+		for QueueLength.Load() > 0 {
 			if crController.IsDoingSnapshot.Load() || crController.IsRestoringSnapshot.Load() ||
 				crController.IsContainerUnavailable.Load() {
-				AddRequestToQueue(item)
-				return
+				break
 			}
-			res := forwardBuffered(item.Data)
-			if item.RespCh != nil {
-				// Canal buffered(1): se o handler já desistiu (timeout/desconexão),
-				// o send não bloqueia e o resultado é descartado.
-				item.RespCh <- res
+			request, err := GetRequestFromQueue()
+			if err != nil {
+				break
 			}
-		}(request)
+			crController.IsRunningPendingRequestQueue.Store(true)
+
+			drainSlots <- struct{}{}
+			crController.InFlightRequests.Add(1)
+			go func(item QueueHttpRequest) {
+				defer func() {
+					<-drainSlots
+					crController.InFlightRequests.Done()
+				}()
+				res := forwardBuffered(item.Data)
+				if item.RespCh != nil {
+					// Canal buffered(1): se o handler já desistiu (timeout/
+					// desconexão), o send não bloqueia e o resultado é descartado.
+					item.RespCh <- res
+				}
+			}(request)
+		}
 	}
 }
 
@@ -134,8 +144,13 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 }
 
 // forwardBuffered registra o request no buffer de reprocess, encaminha pra
-// aplicação e marca como processado.
+// aplicação e marca como processado. GET/HEAD não mutam estado: vão direto,
+// sem entrar no buffer (replay de leituras seria inútil e incharia o buffer
+// entre snapshots).
 func forwardBuffered(data config.RequestData) config.Result {
+	if data.Method == http.MethodGet || data.Method == http.MethodHead {
+		return sendRequest(data, 0)
+	}
 	requestNumber := config.SaveRequestToBuffer(data)
 	res := sendRequest(data, requestNumber)
 	config.UpdateRequestToProcessed(requestNumber)
