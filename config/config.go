@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 )
 
@@ -132,6 +133,39 @@ func GetInterceptorPort() string {
 
 func GetHeartBeatPath() string {
 	return os.Getenv("HEARTBEAT_PATH")
+}
+
+// --- Canário de regressão: backend-agnóstico via templates de URL ---
+// Defaults preservam o comportamento do kv-test (sem env = nada muda).
+// Templates aceitam {key} e {value}. Ex. webdis:
+//   CANARY_GET_URL=/GET/{key}  CANARY_SET_URL=/SET/{key}/{value}
+//   CANARY_SET_METHOD=GET      CANARY_VALUE_FIELD=GET
+
+func GetCanaryGetURL() string {
+	if v := os.Getenv("CANARY_GET_URL"); v != "" {
+		return v
+	}
+	return "/?key={key}" // default kv-test
+}
+
+func GetCanarySetURL() string {
+	if v := os.Getenv("CANARY_SET_URL"); v != "" {
+		return v
+	}
+	return "/" // default kv-test (key/value vão no corpo do POST)
+}
+
+func GetCanarySetMethod() string {
+	if v := os.Getenv("CANARY_SET_METHOD"); v != "" {
+		return strings.ToUpper(v)
+	}
+	return "POST" // default kv-test
+}
+
+// GetCanaryValueField: campo JSON de onde extrair o valor do canário na
+// resposta do GET. Vazio = corpo cru (default kv-test).
+func GetCanaryValueField() string {
+	return os.Getenv("CANARY_VALUE_FIELD")
 }
 
 func GetNamespace() string {
