@@ -1,7 +1,9 @@
 package heartbeat
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -219,8 +221,14 @@ func stateRegressionRecovery() {
 	log.Warn().Int("replayed", n).Msg("State regression recovery: buffered requests queued for replay")
 }
 
+// canarySubst substitui {key}/{value} no template de URL.
+func canarySubst(tmpl, key, val string) string {
+	s := strings.ReplaceAll(tmpl, "{key}", key)
+	return strings.ReplaceAll(s, "{value}", val)
+}
+
 func canaryGet(appURL string) (uint64, bool, error) {
-	resp, err := canaryClient.Get(appURL + "/?key=" + canaryKey)
+	resp, err := canaryClient.Get(appURL + canarySubst(config.GetCanaryGetURL(), canaryKey, ""))
 	if err != nil {
 		return 0, false, err
 	}
@@ -235,8 +243,24 @@ func canaryGet(appURL string) (uint64, bool, error) {
 	if resp.StatusCode != http.StatusOK {
 		return 0, false, errBadStatus
 	}
-	v := strings.Trim(strings.TrimSpace(string(body)), "\"")
-	n, parseErr := strconv.ParseUint(v, 10, 64)
+	field := config.GetCanaryValueField()
+	var raw string
+	if field == "" {
+		// Corpo cru (kv-test): o body é o próprio valor.
+		raw = strings.Trim(strings.TrimSpace(string(body)), "\"")
+	} else {
+		// Resposta JSON (ex. webdis {"GET":"5"} ou {"GET":null}).
+		var m map[string]interface{}
+		if jErr := json.Unmarshal(body, &m); jErr != nil {
+			return 0, false, jErr
+		}
+		val, ok := m[field]
+		if !ok || val == nil {
+			return 0, false, nil // chave ausente
+		}
+		raw = strings.Trim(fmt.Sprintf("%v", val), "\"")
+	}
+	n, parseErr := strconv.ParseUint(raw, 10, 64)
 	if parseErr != nil {
 		// Valor ilegível: não dá pra raciocinar sobre regressão neste tick.
 		return 0, false, parseErr
@@ -251,8 +275,17 @@ type errBadStatusType struct{}
 func (errBadStatusType) Error() string { return "canary get: unexpected status" }
 
 func canaryPost(appURL string, val uint64) error {
-	form := url.Values{"key": {canaryKey}, "value": {strconv.FormatUint(val, 10)}}
-	resp, err := canaryClient.PostForm(appURL+"/", form)
+	valStr := strconv.FormatUint(val, 10)
+	setURL := appURL + canarySubst(config.GetCanarySetURL(), canaryKey, valStr)
+	var resp *http.Response
+	var err error
+	if config.GetCanarySetMethod() == "GET" {
+		// Backend estilo webdis: chave/valor vão na URL (ex. /SET/{key}/{value}).
+		resp, err = canaryClient.Get(setURL)
+	} else {
+		// Default kv-test: POST com form key/value.
+		resp, err = canaryClient.PostForm(setURL, url.Values{"key": {canaryKey}, "value": {valStr}})
+	}
 	if err != nil {
 		return err
 	}
