@@ -119,7 +119,14 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 		Body:   body,
 	}
 
-	if crController.IsUnavailable() {
+	// `QueueLength > 0` força a ordem REPLAY-ANTES-DE-NOVAS: enquanto a fila tiver
+	// itens (replay pós-recuperação + buffered), toda request nova entra ATRÁS
+	// deles (FIFO) em vez de ir pelo caminho direto. Sem isso, a flag
+	// IsRunningPendingRequestQueue fica momentaneamente false entre ciclos do
+	// ProcessQueue (sleep 50ms) e a request nova fura a fila pelo direto —
+	// interleavando writes novos com o replay (writes antigos sobrescrevendo os
+	// novos). Com a checagem, a nova só é processada após a fila drenar por completo.
+	if crController.IsUnavailable() || QueueLength.Load() > 0 {
 		// Fila de recuperação: o handler fica bloqueado esperando o resultado
 		// pelo canal — é ele quem escreve a resposta, nunca o worker. Sem isso
 		// o net/http finaliza a resposta como 200 vazio assim que o handler
