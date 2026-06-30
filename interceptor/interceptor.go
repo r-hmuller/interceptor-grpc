@@ -20,7 +20,7 @@ var singleInstance *http.Client
 
 // drainSlots limita a concorrência da drenagem da fila (replay pós-recuperação
 // pode ter dezenas de milhares de entradas; sem limite inundaria a aplicação).
-var drainSlots = make(chan struct{}, 32)
+var drainSlots = make(chan struct{}, 64)
 
 // Tempo máximo que um request enfileirado espera o ciclo de recuperação
 // (snapshot/restore + drenagem da fila). Igual ao timeout do spin-gate.
@@ -37,7 +37,7 @@ type QueueHttpRequest struct {
 
 func ProcessQueue() {
 	for {
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(30 * time.Millisecond)
 
 		// Skip processing if container is unavailable, but don't exit the loop
 		if crController.IsContainerUnavailable.Load() {
